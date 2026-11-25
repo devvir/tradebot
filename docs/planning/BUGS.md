@@ -9,36 +9,13 @@ a headstone here.
 
 ---
 
-## The audit's month counts measure cold storage, not what exists
-
-**Verified 2026-08-13.**
-
-The first line of every dashboard cell reads `108 mo (2017-07 → 2026-06)`, and it is derived from
-`cold.sqlite` — so it counts **months cold storage holds parts for**, not months of data that
-exist. That makes an inventory out of a backup backlog.
-
-The proof is bybit: its vault parts were purged on 2026-08-13 while every partition stayed on disk,
-and the column went to `—`. Nothing was lost and the number said everything was.
-
-It should come from the producers: the vault's ledger, and the catalog for the archives. Cold storage
-stays the authority for lines two and three, which are about what is backed up, and that is the one
-thing it does know.
-
-**How to check:** compare a venue's first-line month count against the `vault` topic of the facts
-store (`@shared/facts/vault.sqlite`), which knows nothing about backups.
-
-Fixing it belongs to the cold scripts' move onto hauler's archives.
-
----
-
 ## Bitget: the catalog holds the poorer of two copies of some days
 
-**Observed 2026-10-07**, when hauler passed over files downloaded before the catalog existed and
-found 370 of bitget's that differed from what the catalog describes — 652 a day later, with spot klines
-and spot quotes. Each was moved aside as `.bak`
-and the catalog's copy fetched in its place. In every pair looked at, the file that was already on
-disk is the fuller one. Two separate causes, and **neither is understood well enough to fix yet** —
-what follows is what was seen, and what was not checked.
+**Counted 2026-10-08**: hauler, passing over files downloaded before the catalog existed, found 652
+of bitget's that differ from what the catalog describes. Each was moved aside as `.bak` and the
+catalog's copy fetched in its place. In every pair looked at, the file that was already on disk is
+the fuller one. Two separate causes, and **neither is understood well enough to fix yet** — what
+follows is what was seen, and what was not checked.
 
 ### Klines: an era-1 file that is an empty archive, where the era-2 file holds the day
 
@@ -58,11 +35,11 @@ Seen:
   are full-sized. For `ADAUSDT` 2022-04-03 the venue answers 22 bytes at the era-1 path and 64,051
   at the era-2 one. `BNBUSDT` 2022-01-19 and 2022-05-18 are two more.
 
-**Spot `klines,1m` does it too**: 125 more files by 2026-10-08 (105 when these were counted), seven symbols (AAVE, ADA, BNB, BTC,
-DOGE, PYUSD, QKC — all `…USDT`) on 43 days between 2022-01-19 and 2023-10-31. In the one pair
-opened, the file that was on disk was generated 2024-07-30 and its replacement 2022-11-08, as on the
-futures line. None of the 105 replacements is an empty archive. Nothing else about them was looked
-at — `QKCUSDT` and `PYUSDUSDT` are 58 of them and all in 2023, which may be another matter.
+**Spot `klines,1m` does it too**: 125 files, seven symbols (AAVE, ADA, BNB, BTC, DOGE, PYUSD, QKC —
+all `…USDT`) on 43 days between 2022-01-19 and 2023-10-31. In the one pair opened, the file that was
+on disk was generated 2024-07-30 and its replacement 2022-11-08, as on the futures line. None of the
+replacements checked is an empty archive. Nothing else about them was looked at — the `QKCUSDT` and
+`PYUSDUSDT` files are all in 2023, which may be another matter.
 
 Not checked: how many era-1 kline files across the catalog are empty archives, and whether each has
 an era-2 copy. The days BITGET.md counts as "the only copy" may have been found by an era-1 key
@@ -97,7 +74,7 @@ A larger file is not proof of the right file.
 **How to check:** the same request for `depth/ZKSYNCUSDT/2/20240727.zip` and
 `depth/ZKUSDT/2/20240727.zip` answers 4643 and 129133.
 
-**Spot `quotes` too**: 157 files by 2026-10-08. Not opened — only counted.
+**Spot `quotes` too**: 157 files. Not opened — only counted.
 
 ### What it costs meanwhile
 

@@ -453,6 +453,18 @@ limit on funding and statistics, and that futures answers are not compressed.
 717 calls, no failure but the refusals provoked. Small calls on eight connections: 24 a second
 until the 200-per-10-seconds wall.
 
+### Gaps in the archive
+
+**`SUN_USDT` perp trades, 2021-08 and 2021-09.** The archive answers `404` for both months while
+the perp traded either side (`docs/venues/GATE.md`): real trades the archive tier does not hold.
+REST is the only other route, and futures trades reach 180 days back (*Datasets* above), so as
+surveyed gate's API cannot supply them either. What is open is whether any endpoint reaches that far.
+
+**A sweep for others like it.** Whether other gate perp symbols have months of this kind is not
+known; this one surfaced only by accident. A sweep comparing each symbol's month coverage in the
+archive against its first and last file would find the rest, and is worth doing before a REST
+backfill for gate is designed, so it is sized against the real list.
+
 ---
 
 ## HTX
