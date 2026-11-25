@@ -119,13 +119,17 @@ export const useAsk = <T>(path: string | null, ask: (path: string, signal: Abort
  * queued on a single-threaded catalog. Here the next one is scheduled only once
  * the last has settled, answer or failure.
  *
+ * **The interval may be a function**, read each time the next wait is set: a
+ * caller that polls faster at some moments changes how long the next wait is
+ * without cancelling the request in flight or asking again early.
+ *
  * `now()` asks at once instead of waiting out the interval, and while a request
  * is in flight it asks once more as soon as that one settles — never two at a
  * time. `stop()` ends it, and an answer arriving after that is dropped.
  */
 export const poll = <T>(
   ask:     (signal: AbortSignal) => Promise<T>,
-  everyMs: number,
+  everyMs: number | (() => number),
   on:      { data: (data: T) => void; error?: (err: Error) => void },
 ): { now: () => void; stop: () => void } => {
   let stopped = false;
@@ -162,7 +166,7 @@ export const poll = <T>(
           again = false;
           run();
         } else {
-          timer = setTimeout(run, everyMs);
+          timer = setTimeout(run, typeof everyMs === 'function' ? everyMs() : everyMs);
         }
       });
   };

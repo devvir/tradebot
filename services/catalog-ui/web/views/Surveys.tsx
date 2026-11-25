@@ -116,7 +116,7 @@ export const Surveys = () => {
 
   return (
     <Stack gap="md">
-      <Waiting asked={asked}>
+      <Waiting asked={asked} title="Prospector could not answer">
         {({ items }) => (
           <Table
             caption="Surveys"
@@ -821,8 +821,13 @@ const usePolled = <T,>(path: string, ask: (path: string, signal: AbortSignal) =>
   const [state, setState] = useState<Asked<T>>({ loading: true });
   const polling = useRef<{ now: () => void; stop: () => void }>(undefined);
 
+  /** Read at each wait, so a change of pace neither cancels the request in flight nor asks early. */
+  const pace = useRef(everyMs);
+
+  pace.current = everyMs;
+
   useEffect(() => {
-    polling.current = poll(signal => ask(path, signal), everyMs, {
+    polling.current = poll(signal => ask(path, signal), () => pace.current, {
       data: data => setState({ data, loading: false }),
 
       /**
@@ -835,7 +840,7 @@ const usePolled = <T,>(path: string, ask: (path: string, signal: AbortSignal) =>
     });
 
     return () => polling.current?.stop();
-  }, [path, everyMs]);
+  }, [path]);
 
   const again = useCallback(() => polling.current?.now(), []);
 

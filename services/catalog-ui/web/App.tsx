@@ -5,6 +5,7 @@ import { VenueView } from './views/Venue';
 import { MarketView } from './views/Market';
 import { Surveys } from './views/Surveys';
 import { Lenses } from './views/Lenses';
+import { ErrorBoundary } from './views/ErrorBoundary';
 import { catalog, useAsk } from './api';
 import type { Lens, Where } from './types';
 
@@ -51,6 +52,7 @@ export interface Route {
 
 export const App = () => {
   const route = useRoute();
+  const here  = linkTo(route);
   const where = useAsk<Where>('/where',
     () => fetch('/api/where').then(res => res.json() as Promise<Where>));
 
@@ -87,14 +89,22 @@ export const App = () => {
 
       <AppShell.Main>
         <Container size="xl" px={0}>
-          {route.section === 'contents' && <Crumbs route={route} />}
+          {/*
+            Each part fails on its own: a view that throws leaves the tabs, and the
+            crumbs above it, working. Moving anywhere else renders it afresh.
+          */}
+          {route.section === 'contents' && (
+            <ErrorBoundary reset={here}><Crumbs route={route} /></ErrorBoundary>
+          )}
 
-          {route.section === 'surveys' ? <Surveys />
-            : route.section === 'lenses' ? <Lenses slug={route.lens} />
-              : route.venue === undefined ? <Venues lens={route.lens} />
-                : route.market !== undefined
-                  ? <MarketView venue={route.venue} market={route.market} lens={route.lens} />
-                  : <VenueView venue={route.venue} lens={route.lens} />}
+          <ErrorBoundary reset={here}>
+            {route.section === 'surveys' ? <Surveys />
+              : route.section === 'lenses' ? <Lenses slug={route.lens} />
+                : route.venue === undefined ? <Venues lens={route.lens} />
+                  : route.market !== undefined
+                    ? <MarketView venue={route.venue} market={route.market} lens={route.lens} />
+                    : <VenueView venue={route.venue} lens={route.lens} />}
+          </ErrorBoundary>
         </Container>
       </AppShell.Main>
     </AppShell>

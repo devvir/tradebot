@@ -12,8 +12,12 @@ import type { LastRun } from '../types';
  * rather than replaced by "could not load".
  */
 
-export const Waiting = <T,>({ asked, children }: {
+export const Waiting = <T,>({ asked, title = 'Request failed', children }: {
   asked: Asked<T>;
+
+  /** What the failure notice is headed with: who did not answer, where the view knows. */
+  title?: string;
+
   children: (data: T) => ReactNode;
 }) => {
   /**
@@ -29,7 +33,7 @@ export const Waiting = <T,>({ asked, children }: {
    * page has to say.
    */
   const failed = asked.error === undefined ? null : (
-    <Alert color="orange" variant="light" title="The catalog refused that" mb="md">
+    <Alert color="orange" variant="light" title={title} mb="md">
       <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{asked.error}</Text>
     </Alert>
   );
