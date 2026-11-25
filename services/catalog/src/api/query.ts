@@ -50,4 +50,4 @@ export const xmlCarries = (text: string): boolean => ! NOT_XML.test(text);
 
 // ── Internals ─────────────────────────────────────────────────────────────────
 
-const NOT_XML = /[^\t\n\r -퟿-�\u{10000}-\u{10FFFF}]/u;
+const NOT_XML = /[^\t\n\r -\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;

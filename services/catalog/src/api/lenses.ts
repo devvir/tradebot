@@ -130,8 +130,8 @@ export const mountLenses = (app: Application, db: DatabaseSync): void => {
  * time — see `send` for what is tried again first.
  *
  * **What is relayed is always JSON.** An answer that is not — a proxy's or a
- * framework's page — is logged and answered with an error of the same status,
- * or `502` where prospector failed.
+ * framework's page — is logged and answered with an error of the same 4xx
+ * status, or `502` for any other: a page is never a success.
  */
 const stored = async (res: Response, method: string, path: string, body?: unknown): Promise<void> => {
   try {
@@ -142,7 +142,7 @@ const stored = async (res: Response, method: string, path: string, body?: unknow
     } else if (typeof answer.body === 'string') {
       logger.warn({ status: answer.status, body: answer.body }, 'Prospector answered a lens write with something that is not JSON');
 
-      res.status(answer.status >= 500 ? 502 : answer.status).json({ error: 'The collector refused the request' });
+      res.status(answer.status >= 400 && answer.status < 500 ? answer.status : 502).json({ error: 'The collector refused the request' });
     } else {
       res.status(answer.status).json(answer.body);
     }

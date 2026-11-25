@@ -22,6 +22,7 @@ vi.mock('../src/lenses/scope', async original => {
 const { mount } = await import('../src/api');
 const { default: cfg } = await import('../src/config');
 const { lensScope } = await import('../src/lenses/scope');
+const { xmlCarries } = await import('../src/api/query');
 
 /**
  * The catalog as one bucket: keys say what each file *is*, sort as bytes, and a
@@ -316,6 +317,11 @@ describe('a request it cannot answer', () => {
       expect(XMLValidator.validate(text)).toBe(true);
       expect(text).toContain('<Code>InvalidArgument</Code>');
     }
+  });
+
+  it('carries every character XML 1.0 allows, up to the edges of each range', () => {
+    for (const text of ['\t\n\r ', '\uD7FF', '\uE000', '\uFFFD', '\u{10000}', '\u{10FFFF}']) expect(xmlCarries(text)).toBe(true);
+    for (const text of ['\u0000', '\u001F', '\uD800', '\uDFFF', '\uFFFE', '\uFFFF']) expect(xmlCarries(text)).toBe(false);
   });
 
   it('does not echo a lens XML cannot carry', async () => {

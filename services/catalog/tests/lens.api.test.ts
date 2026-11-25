@@ -458,7 +458,7 @@ describe('a call prospector does not answer', () => {
   });
 
   it('answers in JSON where prospector does not', async () => {
-    for (const [status, relayed] of [[404, 404], [503, 502]] as const) {
+    for (const [status, relayed] of [[200, 502], [201, 502], [302, 502], [404, 404], [503, 502]] as const) {
       failing(async () => new Response('<html>Cannot DELETE /</html>', { status, headers: { 'content-type': 'text/html' } }));
 
       const answer = await ask<{ error: string }>('DELETE', '/lenses/cold-store');
