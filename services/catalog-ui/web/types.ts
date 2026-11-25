@@ -51,19 +51,14 @@ export interface LastRun {
   /**
    * Whether this is the venue's **first** pass: the backfill rather than a later
    * top-up. Not the same question as `kind`, which says by what means.
-   *
-   * Optional only because a page is served before the catalog behind it is
-   * restarted; a reader falls back to `completedEver`, which answers the same
-   * thing for a venue that has never finished one.
    */
-  first?:  boolean;
+  first:   boolean;
 
   /**
    * The newest pass that finished, while this one is still going. Null where
-   * nothing is running or nothing has finished; optional for the same reason
-   * as `first`.
+   * nothing is running or nothing has finished.
    */
-  previous?: FinishedRun | null;
+  previous: FinishedRun | null;
 }
 
 /** A pass that finished: when, and whether it was the venue's backfill. */
@@ -133,11 +128,20 @@ export interface Order {
   /** `go` for Start, Update, Resume and Refresh; `pause` for Pause. */
   kind: 'go' | 'pause';
 
-  /** When it was given — so one that never takes effect is let go of, and said so. */
+  /**
+   * When it was given, by this browser's clock — so one that never takes effect
+   * is let go of, and said so. Never compared with a time the catalog reports.
+   */
   at:   number;
 
   /** The venue's state when it was given, since what counts as done depends on it. */
   from: string | null;
+
+  /**
+   * When the venue's most recent pass began, as the catalog reported it when the
+   * order was given. A different start later is a pass begun since.
+   */
+  fromStartedAt: string | null;
 }
 
 export interface Status extends Venue {
@@ -179,7 +183,7 @@ export interface Status extends Venue {
    * backlog mean something: zero is *nothing outstanding* where a venue probes,
    * and *not applicable* where its listing states everything.
    */
-  probing?:      boolean;
+  probing:       boolean;
 
   /**
    * Whether the venue has a keyspace to walk. False where its bucket refuses a

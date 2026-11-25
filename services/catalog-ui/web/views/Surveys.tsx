@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActionIcon, Anchor, Badge, Box, Button, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Box, Button, CloseButton, Group, Loader, Modal, Stack, Text } from '@mantine/core';
 import { poll, post, prospector } from '../api';
 import { Dim, LastSurvey, Table, Waiting, bytes, count, howOf } from './Table';
 import { linkTo } from '../App';
@@ -33,7 +33,7 @@ export const Surveys = () => {
     Object.keys(orders).length > 0 ? ORDER_POLL_MS : POLL_MS);
 
   const [busy, setBusy]  = useState<string | null>(null);
-  const said             = useFading();
+  const said             = useSaid();
 
   /** A refresh throws a venue's progress away, so it is confirmed rather than done. */
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -46,15 +46,21 @@ export const Surveys = () => {
     kind:   Order['kind'],
   ) => {
     setBusy(label);
+    said.clear();
 
     const at = Date.now();
 
-    const stateOf = (venue: string): string | null =>
-      asked.data?.items.find(row => row.venue === venue)?.state ?? null;
+    const rowOf = (venue: string): Status | undefined =>
+      asked.data?.items.find(row => row.venue === venue);
 
     setOrders(had => ({
       ...had,
-      ...Object.fromEntries(venues.map(venue => [venue, { kind, at, from: stateOf(venue) }])),
+      ...Object.fromEntries(venues.map((venue): [string, Order] => [venue, {
+        kind,
+        at,
+        from:          rowOf(venue)?.state ?? null,
+        fromStartedAt: rowOf(venue)?.lastRun.startedAt ?? null,
+      }])),
     }));
 
     try {
@@ -77,7 +83,7 @@ export const Surveys = () => {
       again();
     } catch (err) {
       setOrders(had => without(had, venues));
-      said.say((err as Error).message);
+      said.fail((err as Error).message);
     } finally {
       setBusy(null);
     }
@@ -110,7 +116,7 @@ export const Surveys = () => {
     setOrders(had => without(had, [...done, ...lapsed]));
 
     if (lapsed.length > 0)
-      said.say(`No sign of ${lapsed.join(', ')} acting on it after ${ORDER_MS / 60_000} minutes — `
+      said.fail(`No sign of ${lapsed.join(', ')} acting on it after ${ORDER_MS / 60_000} minutes — `
         + 'the catalog log will say why');
   }, [asked.data, orders]);
 
@@ -145,16 +151,7 @@ export const Surveys = () => {
                 cell: v => (
                   <Stack gap={4} align="flex-start">
                     <Anchor size="sm" href={linkTo({ venue: v.venue })}>{v.venue}</Anchor>
-
-                    {/*
-                      **Resolved here, so the two columns cannot disagree.** The
-                      badge takes a run and the state badge takes a venue, and
-                      only the second can fall back to `completedEver` where a
-                      page is served against a catalog that does not answer
-                      `first` yet — so the fallback is applied once, on the way
-                      in, rather than in one of the two places.
-                    */}
-                    <LastSurvey of={{ ...v.lastRun, first: v.lastRun.first ?? ! v.completedEver }} />
+                    <LastSurvey of={v.lastRun} />
                   </Stack>
                 ),
               },
@@ -191,8 +188,7 @@ export const Surveys = () => {
                 head:  'WIP',
                 width: '10%',
                 num:   true,
-                cell:  v => (v.wip > 0 || (v.probing ?? v.lastRun.kind === 'update')
-                  ? count(v.wip) : <Dim>—</Dim>),
+                cell:  v => (v.wip > 0 || v.probing ? count(v.wip) : <Dim>—</Dim>),
               },
               {
                 /**
@@ -227,7 +223,8 @@ export const Surveys = () => {
               },
               { head: 'Bytes', width: '8%', num: true, cell: v => bytes(v.bytes) },
               {
-                head: '',
+                head: 'Actions',
+                hideHead: true,
                 width: '13%',
                 cell: (v) => {
                   /**
@@ -327,7 +324,16 @@ export const Surveys = () => {
         be wrong about half the rows.
       */}
       <Group justify="flex-end">
-        {said.text && <Text size="sm" c="dimmed">{said.text}</Text>}
+        {/*
+          **Always in the page, so what lands in it is announced.** A live region
+          that appears with its text is one a screen reader has not been
+          watching, and says nothing.
+        */}
+        <div role="status" aria-live="polite">
+          {said.now && <Text size="sm" c={said.now.sticks ? 'red' : 'dimmed'}>{said.now.text}</Text>}
+        </div>
+
+        {said.now?.sticks && <CloseButton size="sm" aria-label="Dismiss" onClick={said.clear} />}
 
         <Button
           size="xs" variant="default" disabled={busy !== null}
@@ -398,8 +404,12 @@ const GOING = new Set(['starting', 'walking', 'updating']);
  * **A pass that began after the order counts**, not only one still running: a
  * small venue can open and close a whole update between two polls, and waiting
  * for a state it has already left would hold the row until the order lapsed.
+ *
+ * **Told by the pass's start changing, not by when it began.** Both starts are
+ * the catalog's own report, so whatever this browser's clock says never enters
+ * into it.
  */
-const tookEffect = (order: Order, now: Status): boolean => {
+export const tookEffect = (order: Order, now: Status): boolean => {
   if (order.kind === 'pause') return now.state === 'paused' || now.state === 'not started';
 
   if (GOING.has(now.state)) return true;
@@ -411,9 +421,7 @@ const tookEffect = (order: Order, now: Status): boolean => {
    */
   if (order.from === 'paused' && now.state !== 'paused' && ! now.stopping) return true;
 
-  const began = now.lastRun.startedAt === null ? NaN : Date.parse(now.lastRun.startedAt);
-
-  return began >= order.at - 5_000;
+  return now.lastRun.startedAt !== null && now.lastRun.startedAt !== order.fromStartedAt;
 };
 
 const without = (had: Record<string, Order>, venues: readonly string[]): Record<string, Order> =>
@@ -588,7 +596,7 @@ const State = ({ of, order }: { of: Status; order?: Order }) => {
     return (
       <Badge
         color={pausing ? 'orange' : 'teal'} variant="light" size="sm"
-        leftSection={<Loader size={9} color="currentColor" />}
+        leftSection={<Loader size={9} color="currentColor" aria-hidden />}
         title={pausing ? 'Pausing' : 'Starting'}
       >{pausing ? 'pausing' : 'starting'}</Badge>
     );
@@ -605,15 +613,7 @@ const State = ({ of, order }: { of: Status; order?: Order }) => {
    * the occasion — **backfilling** the first time, **updating** every time after
    * — and the mechanism stays, as an icon and a tooltip, for whoever wants it.
    */
-  /**
-   * **`first` where the catalog says so, and the next best thing where it does
-   * not.** The page is static files and the API is a process, so a deployment
-   * serves a new page against an older catalog for as long as it takes to
-   * restart — and a venue that has never completed a pass is backfilling by any
-   * reading, which is what makes the fallback safe rather than merely quiet.
-   */
-  const first = of.lastRun.first ?? ! of.completedEver;
-  const said  = ! working ? of.state : first ? 'backfilling' : 'updating';
+  const said = ! working ? of.state : of.lastRun.first ? 'backfilling' : 'updating';
 
   return (
     <Badge
@@ -681,7 +681,7 @@ const Detail = ({ of, order }: { of: Status; order?: Order }) => {
   const run  = of.lastRun;
 
   /** The occasion, as the badge beside it names it; the mechanism is the title. */
-  const what = (run.first ?? ! of.completedEver) ? 'Backfill' : 'Update';
+  const what = run.first ? 'Backfill' : 'Update';
 
   /**
    * The mechanism, and the moment — both context for the duration, which is the
@@ -698,6 +698,7 @@ const Detail = ({ of, order }: { of: Status; order?: Order }) => {
    * is on its way, it is exactly the row that looked as though nothing was.
    */
   if ((of.state === 'starting' || order?.kind === 'go') && ! run.ongoing)
+    // The pass about to begin, not the last one: `first` describes that, `completedEver` this.
     return <Text size="sm">{run.kind === null || ! of.completedEver ? 'Backfill' : 'Update'} starting…</Text>;
 
   if (run.kind === null) return <Dim>Not started yet</Dim>;
@@ -709,7 +710,7 @@ const Detail = ({ of, order }: { of: Status; order?: Order }) => {
           ? <Text size="sm" title={how}>{what} started at {when(run.startedAt)}</Text>
           : <Text size="sm" title={how}>{what} in progress</Text>}
 
-        <Before run={run.previous ?? null} />
+        <Before run={run.previous} />
       </Stack>
     );
 
@@ -785,28 +786,52 @@ const Due = ({ at }: { at: string | null }) => {
 const BUTTON = 62;
 
 /** How long an acknowledgement stays on screen before it stops being news. */
-const SAID_MS = 6_000;
+export const SAID_MS = 6_000;
+
+/** What the page has just said: the words, and whether they stay until dismissed. */
+export interface Said {
+  text:   string;
+  sticks: boolean;
+}
 
 /**
- * What was just asked for, said once and then forgotten.
+ * What the page says about what was just asked for, with `show` told each time
+ * it changes.
  *
- * **It is an acknowledgement, not a status.** "Asked" describes an instant, and
- * left on the page it reads as a condition — which is misleading beside a table
- * that is telling you the actual state every ten seconds.
+ * **An acknowledgement fades; a failure stays.** "Asked" describes an instant,
+ * and left on the page it reads as a condition — misleading beside a table that
+ * is telling you the actual state every ten seconds. A failure is the opposite:
+ * nothing else on the page says it, so it stays until it is dismissed or
+ * something else is said.
  */
-const useFading = () => {
-  const [text, setText] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+export const teller = (show: (now: Said | null) => void) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
-  const say = useCallback((what: string) => {
-    setText(what);
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setText(null), SAID_MS);
-  }, []);
+  const set = (now: Said | null) => {
+    clearTimeout(timer);
+    timer = undefined;
+    show(now);
+  };
 
-  useEffect(() => () => clearTimeout(timer.current), []);
+  return {
+    say: (text: string) => {
+      set({ text, sticks: false });
+      timer = setTimeout(() => set(null), SAID_MS);
+    },
+    fail:  (text: string) => set({ text, sticks: true }),
+    clear: () => set(null),
+    stop:  () => clearTimeout(timer),
+  };
+};
 
-  return { text, say };
+/** `teller`, held by a component for as long as it is mounted. */
+const useSaid = () => {
+  const [now, setNow] = useState<Said | null>(null);
+  const [tell] = useState(() => teller(setNow));
+
+  useEffect(() => () => tell.stop(), [tell]);
+
+  return { now, say: tell.say, fail: tell.fail, clear: tell.clear };
 };
 
 /**

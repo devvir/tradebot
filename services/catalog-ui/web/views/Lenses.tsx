@@ -165,7 +165,7 @@ export const Lenses = ({ slug }: { slug?: string | undefined }) => {
               value={lens?.slug ?? null} onChange={to => { if (to) open(to); }} w={260}
               allowDeselect={false}
             />
-            {lenses === null && reading && <Loader size="sm" type="dots" />}
+            {lenses === null && reading && <Loader size="sm" type="dots" role="status" aria-label="Loading" />}
           </Group>
           <Button size="sm" onClick={startNaming}>New Lens</Button>
         </Group>
@@ -481,7 +481,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
                     <Group gap="sm" align="baseline" justify="flex-end" wrap="nowrap">
                       {size?.updating && (
                         <Group gap={4} wrap="nowrap" title="The rules are saved; what they let through is still being worked out">
-                          <Loader size="xs" />
+                          <Loader size="xs" aria-hidden />
                           <Text size="xs" c="dimmed">Updating…</Text>
                         </Group>
                       )}
@@ -490,7 +490,7 @@ const Editing = ({ lens, onStored, onFailed, onGone }: {
                           {bytes(size.bytes - size.pendingBytes)} downloaded, out of
                         </Text>
                       )}
-                      {size === undefined ? (sizeError === null && <Loader size="sm" type="dots" />) : (
+                      {size === undefined ? (sizeError === null && <Loader size="sm" type="dots" role="status" aria-label="Loading" />) : (
                         <Text fz={30} fw={700} lh={1}
                           title={`Everything this lens lets through: ${count(size.files)} files over ${count(size.partitions)} partitions`}>
                           {bytes(size.bytes)}

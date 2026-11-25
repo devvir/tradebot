@@ -1,4 +1,4 @@
-import { Alert, Badge, Loader, Table as MTable, Text } from '@mantine/core';
+import { Alert, Badge, Loader, Table as MTable, Text, VisuallyHidden } from '@mantine/core';
 import type { ReactNode } from 'react';
 import type { Asked } from '../api';
 import type { LastRun } from '../types';
@@ -42,11 +42,18 @@ export const Waiting = <T,>({ asked, title = 'Request failed', children }: {
 
   if (failed) return failed;
 
-  return <Loader size="sm" type="dots" />;
+  return <Loader size="sm" type="dots" role="status" aria-label="Loading" />;
 };
 
 export interface Column<T> {
   head: string;
+
+  /**
+   * Whether the heading is for screen readers only — for a column whose cells
+   * say what they are, where a visible word above them would be noise.
+   */
+  hideHead?: boolean;
+
   num?: boolean;
 
   /**
@@ -86,7 +93,7 @@ export const Table = <T,>({ caption, columns, rows, empty }: {
         <MTable.Tr>
           {columns.map(col => (
             <MTable.Th key={col.head} ta={col.num ? 'right' : 'left'} w={col.width}>
-              {col.head}
+              {col.hideHead ? <VisuallyHidden>{col.head}</VisuallyHidden> : col.head}
             </MTable.Th>
           ))}
         </MTable.Tr>
