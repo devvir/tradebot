@@ -1,16 +1,31 @@
 import Dockerode from 'dockerode';
 import { selectFromList } from '../ui/prompts';
 
-interface DiscoveryResult {
+export interface DiscoveryResult {
+  /** The container's name. */
+  name: string;
   host: string;
+  /** The host port the primary container port is published on. */
   port: number;
   url: string;
+  /** Every published binding of the container: container port → host port. */
+  ports: Record<number, number>;
+}
+
+interface Candidate {
+  name: string;
+  host: string;
+  port: number;
+  ports: Record<number, number>;
 }
 
 /**
  * Auto-discover a service from running Docker containers.
- * Looks for containers with the service name in image/name, extracts mapped port,
- * and returns connection details.
+ * Looks for containers with the service name in image/name and returns the host port its primary
+ * container port is published on, with the container's other published bindings.
+ *
+ * The primary port is `internalPort` when given, otherwise the first published binding. A
+ * container that does not publish it is skipped: an unpublished port is unreachable from the host.
  *
  * If multiple instances are found, prompts user to select one.
  */
@@ -38,18 +53,21 @@ export async function discoverService(
     const options = matches
       .map(c => {
         const name = (c.Names?.[0] || c.Id.slice(0, 12)).replace(/^\//, '');
-        // Find the mapped public port — prefer the specified internal port if given
-        const portBinding = internalPort
-          ? c.Ports?.find(p => p.PrivatePort === internalPort)
-          : c.Ports?.[0];
-        if (! portBinding?.PublicPort) return null;
-        return {
-          name,
-          host: 'localhost',
-          port: portBinding.PublicPort,
-        };
+        const ports: Record<number, number> = {};
+
+        for (const p of c.Ports ?? []) {
+          if (p.PublicPort && ports[p.PrivatePort] === undefined) ports[p.PrivatePort] = p.PublicPort;
+        }
+
+        const port = internalPort !== undefined
+          ? ports[internalPort]
+          : c.Ports?.find(p => p.PublicPort)?.PublicPort;
+
+        if (! port) return null;
+
+        return { name, host: 'localhost', port, ports };
       })
-      .filter((opt): opt is { name: string; host: string; port: number } => opt !== null);
+      .filter((opt): opt is Candidate => opt !== null);
 
     if (options.length === 0) {
       return null;
@@ -57,12 +75,7 @@ export async function discoverService(
 
     // If only one, use it directly
     if (options.length === 1) {
-      const { host, port } = options[0];
-      return {
-        host,
-        port,
-        url: urlBuilder ? urlBuilder(host, port) : `${host}:${port}`,
-      };
+      return toResult(options[0], urlBuilder);
     }
 
     // Multiple instances — prompt user
@@ -76,13 +89,21 @@ export async function discoverService(
 
     if (! choice) return null;
 
-    return {
-      host: choice.host,
-      port: choice.port,
-      url: urlBuilder ? urlBuilder(choice.host, choice.port) : `${choice.host}:${choice.port}`,
-    };
+    return toResult(choice, urlBuilder);
   } catch (err) {
     // Docker not available or error — return null to fall back to env vars
     return null;
   }
+}
+
+function toResult(
+  candidate: Candidate,
+  urlBuilder?: (host: string, port: number) => string,
+): DiscoveryResult {
+  const { host, port } = candidate;
+
+  return {
+    ...candidate,
+    url: urlBuilder ? urlBuilder(host, port) : `${host}:${port}`,
+  };
 }

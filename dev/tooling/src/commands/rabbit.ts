@@ -10,6 +10,7 @@ export function register(program: Command): void {
     .option('-l, --list', 'List all queues')
     .option('-w, --watch', 'Watch queue in real-time')
     .option('--messages <count>', 'Number of messages to fetch', '10')
+    .option('--url <amqp-url>', 'Connect to this AMQP URL instead of a discovered container')
     .action(async (queueArg: string | undefined, options: any) => {
       try {
         await runRabbitTool(queueArg, options);

@@ -129,5 +129,33 @@ describe('rabbitmq tool', () => {
       expect(mockChannel.close).toHaveBeenCalled();
       expect(mockConnection.close).toHaveBeenCalled();
     });
+
+    it('reports why there is no management API instead of fetching', async () => {
+      const { connectRabbit } = await import('../../src/shared/connections/rabbitmq');
+      vi.mocked(connectRabbit).mockResolvedValueOnce({
+        connection: mockConnection,
+        channel: mockChannel,
+        url: 'amqp://guest:guest@localhost:32771',
+        mgmtUnavailable: 'container rabbitmq does not publish the management port 15672',
+        mgmtAuth: 'Z3Vlc3Q6Z3Vlc3Q=',
+      } as any);
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      global.fetch = vi.fn() as any;
+
+      await run(undefined, { list: true });
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      const output = [...errorSpy.mock.calls, ...vi.mocked(console.log).mock.calls].map(c => c.join(' ')).join('\n');
+      expect(output).toContain('does not publish the management port 15672');
+      expect(mockConnection.close).toHaveBeenCalled();
+    });
+
+    it('connects to the --url given', async () => {
+      const { connectRabbit } = await import('../../src/shared/connections/rabbitmq');
+
+      await run('my-queue', { url: 'amqp://u:p@broker.lan:5672' });
+
+      expect(connectRabbit).toHaveBeenCalledWith({ url: 'amqp://u:p@broker.lan:5672' });
+    });
   });
 });

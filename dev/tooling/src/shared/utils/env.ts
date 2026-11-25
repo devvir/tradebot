@@ -35,6 +35,15 @@ function parseEnvFile(filePath: string): Record<string, string> {
 }
 
 /**
+ * What the shell exported, as opposed to what `loadEnv` merged in from .env files: process.env as
+ * it stood when `loadEnv` last ran, without the values an earlier call wrote.
+ */
+let shellEnv: Record<string, string> | null = null;
+
+/** The values `loadEnv` wrote into process.env that the shell had not set. */
+let loadedEnv: Record<string, string> = {};
+
+/**
  * Load environment variables in order of precedence (lowest → highest):
  * ./.env → ./modules/<module>/.env (if -m) → <custom> (if -e) → ./dev/tooling/.env → process.env
  */
@@ -43,6 +52,14 @@ export function loadEnv(additionalEnvPath: string | null = null, moduleName: str
   const moduleEnv = moduleName ? parseEnvFile(path.join(rootDir, 'modules', moduleName, '.env')) : {};
   const additionalEnv = additionalEnvPath ? parseEnvFile(additionalEnvPath) : {};
   const toolingEnv = parseEnvFile(path.join(moduleDir, '.env'));
+
+  const shell: Record<string, string> = {};
+
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && loadedEnv[k] !== v) shell[k] = v;
+  }
+
+  shellEnv = shell;
 
   const merged: Record<string, string> = {
     ...rootEnv,
@@ -63,6 +80,12 @@ export function loadEnv(additionalEnvPath: string | null = null, moduleName: str
     });
   }
 
+  loadedEnv = {};
+
+  for (const [k, v] of Object.entries(merged)) {
+    if (! (k in shell)) loadedEnv[k] = v;
+  }
+
   Object.assign(process.env, merged);
 
   return merged;
@@ -70,6 +93,17 @@ export function loadEnv(additionalEnvPath: string | null = null, moduleName: str
 
 export function getEnv(key: string, defaultValue?: string): string | undefined {
   return process.env[key] ?? defaultValue;
+}
+
+/**
+ * Read an env var only if the shell exported it, ignoring anything `loadEnv` merged in from .env
+ * files. Before `loadEnv` has run, that is everything in process.env. The value returned is the
+ * current one, with `${VAR}` references resolved.
+ */
+export function getShellEnv(key: string): string | undefined {
+  if (shellEnv && ! (key in shellEnv)) return undefined;
+
+  return process.env[key];
 }
 
 /**

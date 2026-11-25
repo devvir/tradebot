@@ -5,13 +5,14 @@ interface RabbitOptions {
   list?: boolean;
   watch?: boolean;
   messages?: string;
+  url?: string;
 }
 
 export async function run(queueArg?: string, options: RabbitOptions = {}): Promise<void> {
   section('RabbitMQ Monitoring Tool');
   spacer();
 
-  const { connection, channel, mgmtUrl, mgmtAuth } = await connectRabbit();
+  const { connection, channel, mgmtUrl, mgmtUnavailable, mgmtAuth } = await connectRabbit({ url: options.url });
 
   try {
     spacer();
@@ -19,28 +20,32 @@ export async function run(queueArg?: string, options: RabbitOptions = {}): Promi
     if (options.list) {
       section('Available Queues');
 
-      try {
-        const response = await fetch(`${mgmtUrl}/queues`, {
-          headers: { Authorization: `Basic ${mgmtAuth}` },
-        });
+      if (! mgmtUrl) {
+        error(`Cannot list queues without the management API: ${mgmtUnavailable}`);
+      } else {
+        try {
+          const response = await fetch(`${mgmtUrl}/queues`, {
+            headers: { Authorization: `Basic ${mgmtAuth}` },
+          });
 
-        if (response.ok) {
-          const queues = (await response.json()) as any[];
+          if (response.ok) {
+            const queues = (await response.json()) as any[];
 
-          table(
-            queues.map((q: any) => ({
-              Name: q.name,
-              Messages: q.messages || 0,
-              Ready: q.messages_ready || 0,
-              Consumers: q.consumers || 0,
-            })),
-            ['Name', 'Messages', 'Ready', 'Consumers'],
-          );
-        } else {
-          warn('Could not fetch queue list from management API');
+            table(
+              queues.map((q: any) => ({
+                Name: q.name,
+                Messages: q.messages || 0,
+                Ready: q.messages_ready || 0,
+                Consumers: q.consumers || 0,
+              })),
+              ['Name', 'Messages', 'Ready', 'Consumers'],
+            );
+          } else {
+            warn('Could not fetch queue list from management API');
+          }
+        } catch (err) {
+          warn(`Could not connect to RabbitMQ management API: ${(err as Error).message}`);
         }
-      } catch (err) {
-        warn(`Could not connect to RabbitMQ management API: ${(err as Error).message}`);
       }
 
       await channel.close();

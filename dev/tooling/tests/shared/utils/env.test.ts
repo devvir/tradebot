@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseEnvFile, loadEnv } from '../../../src/shared/utils/env';
+import { parseEnvFile, loadEnv, getShellEnv } from '../../../src/shared/utils/env';
 
 function writeTmp(name: string, content: string): string {
   const file = path.join(os.tmpdir(), name);
@@ -78,6 +78,38 @@ describe('loadEnv precedence', () => {
     loadEnv(file);
 
     expect(process.env[UNIQUE]).toBe('from_process');
+    fs.unlinkSync(file);
+  });
+});
+
+describe('getShellEnv', () => {
+  const FROM_FILE = 'TOOLING_TEST_FILE_VAR_99999';
+  const FROM_SHELL = 'TOOLING_TEST_SHELL_VAR_99999';
+
+  afterEach(() => {
+    delete process.env[FROM_FILE];
+    delete process.env[FROM_SHELL];
+  });
+
+  it('returns what the shell exported, not what loadEnv merged in from a file', () => {
+    const file = writeTmp('env-shell.env', `${FROM_FILE}=from_file\n${FROM_SHELL}=from_file\n`);
+    process.env[FROM_SHELL] = 'from_shell';
+
+    loadEnv(file);
+
+    expect(process.env[FROM_FILE]).toBe('from_file');
+    expect(getShellEnv(FROM_FILE)).toBeUndefined();
+    expect(getShellEnv(FROM_SHELL)).toBe('from_shell');
+    fs.unlinkSync(file);
+  });
+
+  it('does not take a value an earlier loadEnv wrote for one the shell exported', () => {
+    const file = writeTmp('env-shell-twice.env', `${FROM_FILE}=from_file\n`);
+
+    loadEnv(file);
+    loadEnv(file);
+
+    expect(getShellEnv(FROM_FILE)).toBeUndefined();
     fs.unlinkSync(file);
   });
 });
