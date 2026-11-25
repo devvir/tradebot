@@ -31,12 +31,6 @@ let pauseWarning: NodeJS.Timeout | null = null;
 export const poolKey = (venue: string, endpointName: string, socketKey = ''): string =>
   `${venue}:${endpointName}:${socketKey}`;
 
-// ── Pool access ───────────────────────────────────────────────────────────────
-
-export const get    = (key: string) => pool.get(key);
-export const set    = (key: string, entry: PoolEntry) => pool.set(key, entry);
-export const remove = (key: string) => pool.delete(key);
-
 // ── Connection management ─────────────────────────────────────────────────────
 
 export interface GetOrConnectOptions {
@@ -175,7 +169,3 @@ export const resumeAll = (): void => {
     if (ws?.isPaused) ws.resume();
   }
 };
-
-// ── Test access ───────────────────────────────────────────────────────────────
-
-export const _test_reset = (): void => pool.clear();

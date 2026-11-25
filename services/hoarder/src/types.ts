@@ -1,18 +1,15 @@
 import WebSocket from 'ws';
-import type { RabbitMQ } from '@devvir/service-kit';
 
 export interface Config {
-  workerUuid:  string;
-  rabbitmqUrl: string;
+  workerUuid: string;
 
   /** Venues this instance collects, from `HOARDER_VENUES`. Each must be a known venue. */
-  venues:      readonly string[];
+  venues:     readonly string[];
 
   [key: string]: unknown;
 }
 
 export interface State {
-  broker:         RabbitMQ.Broker | null;
   isShuttingDown: boolean;
 }
 

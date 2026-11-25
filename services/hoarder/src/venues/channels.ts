@@ -10,11 +10,10 @@
  * Nothing is templated or derived, so what a venue collects is legible here
  * without tracing preset expansion through another package.
  *
- * ⚠ **The lists below are provisional.** They were written before the
- * venues were surveyed — see the *WebSocket* section of each venue doc under `docs/venues/`.
- * Trade feeds turned out largely redundant with each venue's archive, and book feeds — the
- * thing actually worth streaming — are diff streams needing interleaved REST snapshots that
- * this service cannot yet take. Symbol coverage is a two-symbol placeholder.
+ * Each venue collects two symbols, each with a trade channel and a book
+ * channel. Hoarder takes no REST snapshots: of a book it publishes what the
+ * book channel streams and nothing else. For what each venue streams, see the
+ * *WebSocket* section of its doc under `docs/venues/`, where one exists.
  */
 export const VENUE_CHANNELS: Readonly<Record<string, readonly string[]>> = {
   /**

@@ -1,10 +1,10 @@
 import { SKFactory } from '@tradebot/utils';
 import config from './config';
+import type { State } from './types';
 
 const state = {
-  broker: null,
   isShuttingDown: false,
-};
+} satisfies State;
 
 export default SKFactory({
   name: 'hoarder',

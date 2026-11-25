@@ -38,8 +38,6 @@ const open = (ws: any): void => {
 // ── Fresh module per test (singleton pool) ────────────────────────────────────
 
 let poolKey:      typeof import('../src/pool').poolKey;
-let get:          typeof import('../src/pool').get;
-let set:          typeof import('../src/pool').set;
 let getOrConnect: typeof import('../src/pool').getOrConnect;
 let pauseAll:     typeof import('../src/pool').pauseAll;
 let resumeAll:    typeof import('../src/pool').resumeAll;
@@ -51,8 +49,6 @@ beforeEach(async () => {
   const mod = await import('../src/pool');
 
   poolKey      = mod.poolKey;
-  get          = mod.get;
-  set          = mod.set;
   getOrConnect = mod.getOrConnect;
   pauseAll     = mod.pauseAll;
   resumeAll    = mod.resumeAll;
@@ -105,7 +101,6 @@ describe('getOrConnect', () => {
 
     expect(a).toBe(b);
     expect(mockConnect).toHaveBeenCalledOnce();
-    expect(get('twin:realtime:')).toBe(a);
   });
 
   it('throws for an endpoint the venue does not have', () => {
@@ -140,13 +135,19 @@ describe('getOrConnect', () => {
 
 // ── pauseAll / resumeAll ──────────────────────────────────────────────────────
 
+/** Put an entry in the pool whose current socket is `ws`. */
+const connectWith = (ws: any, venue: string, endpointName: string): void => {
+  mockConnect.mockReturnValueOnce(ws);
+  getOrConnect(venue, endpointName, service, vi.fn());
+};
+
 describe('pauseAll and resumeAll', () => {
   it('pauses all OPEN connections', () => {
     const ws1 = makeMockWs(1);
     const ws2 = makeMockWs(1);
 
-    set('twin:realtime:', { ws: ws1, channels: new Set() });
-    set('twin:platform:', { ws: ws2, channels: new Set() });
+    connectWith(ws1, 'twin', 'realtime');
+    connectWith(ws2, 'twin', 'platform');
 
     pauseAll();
 
@@ -158,8 +159,8 @@ describe('pauseAll and resumeAll', () => {
     const ws1 = makeMockWs(1);
     const ws2 = makeMockWs(1);
 
-    set('twin:realtime:', { ws: ws1, channels: new Set() });
-    set('twin:platform:', { ws: ws2, channels: new Set() });
+    connectWith(ws1, 'twin', 'realtime');
+    connectWith(ws2, 'twin', 'platform');
 
     pauseAll();
     resumeAll();
@@ -173,7 +174,7 @@ describe('pauseAll and resumeAll', () => {
   it('skips connections that are not open', () => {
     const ws1 = makeMockWs(3); // CLOSED
 
-    set('twin:realtime:', { ws: ws1, channels: new Set() });
+    connectWith(ws1, 'twin', 'realtime');
 
     pauseAll();
 
@@ -186,8 +187,8 @@ describe('pauseAll and resumeAll', () => {
     const twinWs  = makeMockWs(1);
     const binanceWs = makeMockWs(1);
 
-    set('twin:realtime:', { ws: twinWs,  channels: new Set() });
-    set('binance:public:',  { ws: binanceWs, channels: new Set() });
+    connectWith(twinWs, 'twin', 'realtime');
+    connectWith(binanceWs, 'binance', 'public');
 
     pauseAll();
 

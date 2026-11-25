@@ -52,7 +52,6 @@ const makeService = (stateOverrides: Partial<State> = {}) => {
   const state: State = {
     realtime:        null,
     platform:        null,
-    broker:          null,
     isShuttingDown:  false,
     apiVersion:      null,
     ...stateOverrides,

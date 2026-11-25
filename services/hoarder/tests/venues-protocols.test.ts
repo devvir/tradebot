@@ -6,9 +6,8 @@ import { kraken, _test_split as splitKraken } from '../src/venues/kraken';
 import { okx, _test_toArg as toArg } from '../src/venues/okx';
 
 /**
- * Every frame below was captured from the live venue, not written from the
- * docs — the adapters were built from this traffic, so the fixtures are the
- * record of what each protocol actually does.
+ * The frames below are trimmed from frames captured against the live
+ * endpoints, not written from the venues' docs; `…` marks a shortened value.
  */
 
 // ── Binance ───────────────────────────────────────────────────────────────────
@@ -212,7 +211,7 @@ describe('all venues', () => {
   });
 
   // Round-trip: the venue must confirm its own channel against an ack shaped
-  // the way that venue really answers (fixtures above are captured frames).
+  // the way that venue really answers (fixtures above are trimmed captures).
   it('never confirms a channel it did not subscribe', () => {
     expect(binance.matchAck({ result: null, id: 'nope' }, 'btcusdt@aggTrade')).toBeNull();
     expect(okx.matchAck({ event: 'subscribe', arg: { channel: 'books', instId: 'X' } }, 'trades:BTC-USDT')).toBeNull();

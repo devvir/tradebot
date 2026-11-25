@@ -7,14 +7,12 @@ import type { Config, MessageHandler } from './types';
  * Creates the relay: parse a frame, ask its venue whether it is market data,
  * publish it verbatim. The parsed value is used only to classify the frame; what
  * is published is the received buffer itself, so number text (trailing zeros,
- * exponents, integers beyond double precision), escapes and whitespace reach the
- * archive exactly as the venue sent them. Hoarder never reshapes a payload —
- * normalising across venues is a later stage's job, and a byte-faithful archive
- * is what makes that possible.
+ * exponents, integers beyond double precision), escapes and whitespace are
+ * published exactly as the venue sent them. Hoarder never reshapes a payload.
  *
  * The routing key is the venue name alone. Everything finer (table, action,
  * symbol) is venue-specific vocabulary a binding cannot express portably, and
- * it is already in the payload for consumers that care.
+ * it is already in the payload.
  *
  * A publish failing because the broker's channel or connection is closed
  * (amqplib's IllegalOperationError) means nothing more can be published: the

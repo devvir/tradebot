@@ -3,8 +3,10 @@ import type { AckResult, Venue } from './types';
 const WS_URL = 'wss://stream.binance.com:9443/ws';
 
 /**
- * Binance spot. Channels are raw stream names (`btcusdt@aggTrade`), sent one
- * SUBSCRIBE frame at a time on a single socket.
+ * Binance spot only (`wss://stream.binance.com:9443/ws`); Binance futures is
+ * not collected. Channels are raw stream names (`btcusdt@aggTrade`), sent one
+ * SUBSCRIBE frame at a time on a single socket. For the venue's streams and
+ * endpoints, see the *WebSocket* section of `docs/venues/BINANCE.md`.
  *
  * Observed against the live endpoint:
  *   → {"method":"SUBSCRIBE","params":["btcusdt@aggTrade"],"id":"btcusdt-aggTrade"}
@@ -16,11 +18,6 @@ const WS_URL = 'wss://stream.binance.com:9443/ws';
  * stream, so a typo here fails silently — the socket simply never carries that
  * data. Confirmation is by request id only; treat "subscribed" as "the request
  * was well-formed", not "the stream exists".
- *
- * Futures (`wss://fstream.binance.com`) is deliberately absent: it accepts a
- * subscribe and then delivers nothing from our network, on both the `/ws` and
- * combined-stream paths, while spot streams normally and the futures REST API
- * answers. Add it once it can be verified from wherever hoarder runs.
  */
 export const binance: Venue = {
   name: 'binance',

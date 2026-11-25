@@ -89,9 +89,8 @@ const makeService = () => {
   const stateMap: Record<string, unknown> = {};
 
   const config = {
-    workerUuid:  'test-uuid',
-    rabbitmqUrl: 'amqp://localhost',
-    venues:      ['twin'],
+    workerUuid: 'test-uuid',
+    venues:     ['twin'],
   };
 
   return {

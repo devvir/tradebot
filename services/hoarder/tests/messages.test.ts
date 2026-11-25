@@ -10,15 +10,13 @@ vi.mock('../src/venues', async importOriginal => (await import('./twin')).withTw
 
 const makeService = (stateOverrides: Partial<State> = {}) => {
   const state: State = {
-    broker:         null,
     isShuttingDown: false,
     ...stateOverrides,
   };
 
   const config: Config = {
-    workerUuid:  'test-uuid-1234',
-    rabbitmqUrl: 'amqp://localhost',
-    venues:      ['twin'],
+    workerUuid: 'test-uuid-1234',
+    venues:     ['twin'],
   };
 
   const exchange = { publish: vi.fn().mockResolvedValue(undefined) };
@@ -88,7 +86,7 @@ describe('data messages: publishing', () => {
   });
 
   // Number text, escapes and whitespace are all things a parse/serialise round
-  // trip would change; the archive must hold the bytes the venue sent.
+  // trip would change; what is published must be the bytes the venue sent.
   it('publishes the received bytes unchanged', async () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
@@ -136,8 +134,7 @@ describe('data messages: publishing', () => {
     expect(new Date(ts).getTime()).not.toBeNaN();
   });
 
-  // The envelope is deliberately three headers — the dropped ones (version,
-  // message count, account id) had no consumer anywhere in the pipeline.
+  // The envelope is exactly these three headers.
   it('sends exactly the three envelope headers', async () => {
     const { service, exchange } = makeService();
     const handler = createMessageHandler(service as any, vi.fn());
