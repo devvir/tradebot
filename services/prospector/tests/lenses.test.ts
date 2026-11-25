@@ -1,12 +1,14 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { logger } from '@devvir/service-kit';
+import { catchUp, lenses } from '@tradebot/lenses';
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { putFiles, putVenue, recordSeries } from '../src/catalog';
 import { openCatalog } from '../src/database';
 import { mount } from '../src/api';
-import { _test_settleMs as settleMs, keepLensesCurrent } from '../src/lenses';
+import { _test_settleMs as settleMs, keepLensesCurrent, lensesChanged } from '../src/lenses';
 import type { Application } from 'express';
 import type { CatalogFile, Surveys } from '../src/types';
 import type { DatabaseSync } from 'node:sqlite';
@@ -15,6 +17,15 @@ import type { DatabaseSync } from 'node:sqlite';
  * Storing a lens, and keeping what it lets through current — both here because
  * both are writes, and this service is the only writer of the catalog database.
  */
+
+/** The real lens package, with the two calls a test makes go wrong for one lens able to be made to. */
+vi.mock('@tradebot/lenses', async () => {
+  const actual = await vi.importActual<typeof import('@tradebot/lenses')>('@tradebot/lenses');
+
+  return { ...actual, catchUp: vi.fn(actual.catchUp), lenses: vi.fn(actual.lenses) };
+});
+
+const real = { catchUp: vi.mocked(catchUp).getMockImplementation()!, lenses: vi.mocked(lenses).getMockImplementation()! };
 
 let dir: string;
 let db:  DatabaseSync;
@@ -53,6 +64,9 @@ beforeEach(async () => {
 
 afterEach(() => {
   stop();
+  vi.mocked(catchUp).mockImplementation(real.catchUp);
+  vi.mocked(lenses).mockImplementation(real.lenses);
+  vi.mocked(logger.error).mockClear();
   settleMs(null);
   db.close();
   rmSync(dir, { recursive: true, force: true });
@@ -188,5 +202,76 @@ describe('keeping the lenses current', () => {
     await settled('everything');
 
     expect(members('everything')).toEqual(['binance 202001', 'binance 202101', 'gate 202001', 'gate 202201']);
+  });
+});
+
+describe('a lens that cannot be worked out', () => {
+  /** Rules no evaluation can read, as a definition stored before they were checked would be. */
+  const unreadable = { format: 1, venues: { '*': [{ effect: 'include', datasets: 'trades' }] } };
+
+  /** Newest first is the order a round takes them in, so the lens that throws is the one it meets first. */
+  it('does not keep an older lens from being worked out', async () => {
+    settleMs(1_000);
+
+    await ask('POST', '/lenses', { slug: 'old', definition: old });
+    await ask('POST', '/lenses', { slug: 'bad', definition: all });
+
+    db.prepare(`UPDATE lens SET updated_at = '9999' WHERE slug = 'bad'`).run();
+
+    vi.mocked(catchUp).mockImplementation((on, lens, most) => {
+      if (lens.slug === 'bad') throw new Error('kinds.some is not a function');
+
+      return real.catchUp(on, lens, most);
+    });
+
+    settleMs(20);
+    lensesChanged();
+
+    await settled('old');
+
+    expect(members('old')).toEqual(['binance 202001', 'gate 202001']);
+    expect(vi.mocked(logger.warn).mock.calls.some(([at]) => (at as { lens?: string }).lens === 'bad')).toBe(true);
+  });
+
+  /** The partition is made and taken into every other lens; the one that cannot read it is left behind it, for its catching up. */
+  it('does not fail the transaction that makes a partition', async () => {
+    await ask('POST', '/lenses', { slug: 'everything', definition: all });
+    await ask('POST', '/lenses', { slug: 'bad', definition: all });
+    await settled('everything');
+    await settled('bad');
+
+    vi.mocked(lenses).mockImplementation(on =>
+      real.lenses(on).map(lens => lens.slug === 'bad' ? { ...lens, definition: unreadable as never } : lens));
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      await putFiles(db, [file(2, 'h.zip', '20220101')]);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(db.prepare(`SELECT count(*) AS n FROM partition WHERE month = '202201'`).get()).toEqual({ n: 1 });
+    expect(members('everything')).toContain('gate 202201');
+    expect(members('bad')).not.toContain('gate 202201');
+    expect(db.prepare('SELECT partitions_through < (SELECT MAX(id) FROM partition) AS behind FROM lens WHERE slug = ?').get('bad'))
+      .toEqual({ behind: 1 });
+  });
+});
+
+describe('a lens that cannot be stored', () => {
+  /** A write failing for any reason but a taken slug is this service's fault: answered 500, and logged whole. */
+  it.each([
+    ['POST', '/lenses',            'INSERT'],
+    ['PUT',  '/lenses/everything', 'UPDATE'],
+  ])('answers %s %s with 500 when the write fails', async (method, path, statement) => {
+    await ask('POST', '/lenses', { slug: 'everything', definition: all });
+
+    db.exec(`CREATE TRIGGER failing BEFORE ${statement} ON lens BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+
+    const answer = await ask(method, path, { slug: 'other', definition: all });
+
+    expect(answer).toEqual({ status: 500, body: { error: 'Internal error' } });
+    expect(logger.error).toHaveBeenCalledTimes(1);
   });
 });

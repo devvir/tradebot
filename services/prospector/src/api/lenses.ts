@@ -17,6 +17,10 @@ import type { LensWrite } from '@tradebot/lenses';
  * is worked out afterwards, in the background (`lensesChanged`), and the lens
  * is answered `updating` until that is done.
  *
+ * **A slug already in use is the only refusal a write answers itself** (`409`).
+ * A write that fails for any other reason throws out of the route, and is
+ * answered `500` by the API's error handler (`onError`).
+ *
  * **The row is written where the request is handled, not in the queue the
  * survey's writes wait in.** Every write in this service is synchronous from its
  * `BEGIN` to its `COMMIT`, so nothing is ever half way through one when a

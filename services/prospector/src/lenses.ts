@@ -26,6 +26,11 @@ import type { DatabaseSync } from 'node:sqlite';
  * (`lensesChanged`). So a lens is at most that far behind partitions that have
  * only just been found, and a saved lens is worked out as soon as whoever is
  * saving it has stopped.
+ *
+ * **One lens never holds up the others.** A lens that cannot be brought up to
+ * date is logged by its slug and left where it stopped, and the round goes on
+ * to the next; the following round tries it again. Only a round that cannot
+ * read the list of lenses ends early.
  */
 export const keepLensesCurrent = (db: DatabaseSync): (() => void) => {
   let running = false;
@@ -46,17 +51,21 @@ export const keepLensesCurrent = (db: DatabaseSync): (() => void) => {
         again = false;
 
         for (const { slug } of lenses(db))
-          for (;;) {
-            // Read again each step: its rules may have been saved since the last one.
-            const lens = lensNamed(db, slug);
+          try {
+            for (;;) {
+              // Read again each step: its rules may have been saved since the last one.
+              const lens = lensNamed(db, slug);
 
-            if (! lens || ! catchUp(db, lens, STEP)) break;
+              if (! lens || ! catchUp(db, lens, STEP)) break;
 
-            await new Promise(done => setImmediate(done));
+              await new Promise(done => setImmediate(done));
+            }
+          } catch (err) {
+            logger.warn({ lens: slug, ...fault(err) }, 'Could not bring a lens up to date — trying it again next round');
           }
       } while (again);
     } catch (err) {
-      logger.warn({ ...fault(err) }, 'Could not bring the lenses up to date — trying again shortly');
+      logger.warn({ ...fault(err) }, 'Could not read the lenses to bring them up to date — trying again shortly');
     } finally {
       running = false;
     }

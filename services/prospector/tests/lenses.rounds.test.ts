@@ -69,8 +69,8 @@ describe('rounds of bringing the lenses up to date', () => {
     expect(passes()).toBe(2);
   });
 
-  /** A round that throws says so once, and the next round runs as if it had not. */
-  it('logs a round that failed, and runs the next one', async () => {
+  /** A lens that throws says so once, and the next round runs as if it had not. */
+  it('logs a lens that failed, and runs the next round', async () => {
     vi.mocked(catchUp)
       .mockImplementationOnce(() => { throw new Error('boom'); })
       .mockReturnValue(false);
@@ -85,5 +85,22 @@ describe('rounds of bringing the lenses up to date', () => {
 
     expect(vi.mocked(catchUp).mock.calls).toHaveLength(2);
     expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  /** A lens that cannot be brought up to date is reported by its slug, and the lenses after it still are. */
+  it('goes on to the next lens past one that throws', async () => {
+    vi.mocked(lenses).mockReturnValue([{ slug: 'bad' }, { slug: 'good' }] as never);
+    vi.mocked(catchUp).mockImplementation((_db, lens) => {
+      if (lens.slug === 'bad') throw new Error('boom');
+
+      return false;
+    });
+
+    stop = keepLensesCurrent(db);
+
+    await vi.waitFor(() => expect(vi.mocked(catchUp).mock.calls.map(([, lens]) => lens.slug)).toEqual(['bad', 'good']));
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logger.warn).mock.calls[0]?.[0]).toMatchObject({ lens: 'bad' });
   });
 });
