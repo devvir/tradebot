@@ -28,10 +28,10 @@ import type { Migration } from '../../types';
  * Each runs in its own transaction together with its version bump, so a failure
  * leaves the database at the version it was, never half-migrated.
  *
- * **Each is a thing rather than a step.** The catalog's shape with the rows that
- * are constants of it, then the venues whose contents cannot be discovered and
- * therefore ship measured, and last the shapes a venue used once or stopped
- * writing, which no amount of reading can date.
+ * **Each is a thing rather than a step**: the catalog's shape with the rows that
+ * are constants of it, a venue whose contents cannot be discovered and therefore
+ * ship measured, or the shapes a venue used once or stopped writing, which no
+ * amount of reading can date.
  */
 export const MIGRATIONS: readonly Migration[] = [
   core,

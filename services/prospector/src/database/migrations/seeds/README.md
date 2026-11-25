@@ -291,23 +291,11 @@ file (`marginOf` in `adapters/bitget/instruments.ts`).
 `url_symbol` belongs to the series, not the instrument: an instrument's datasets, and its shapes over
 time, can each be spelled differently, and each spelling under each pattern is its own series.
 
-Ten spot instruments have their era-2 depth (`quotes`) filed under the canonical symbol while their
-klines and trades use another spelling. Their era-2 depth series carry no `url_symbol`, their klines
-and trades series carry the other spelling, and none of the ten has an era-2 depth series under the
-other spelling:
-
-| `symbol` | `url_symbol` of its klines and trades |
-|---|---|
-| `LIQUIDIUMUSDT` | `LIQUIDIUMTOKENUSDT` |
-| `MRSOONUSDT` | `SOONUSDT` |
-| `VELOUSDC` | `VELO1USDC` |
-| `KAONUSDT` | `AKROUSDT` |
-| `TXUSDT` | `COREUMUSDT` |
-| `CATEUSDT` | `CATENEWUSDT` |
-| `RBTCUSDT` | `RBTCNEWUSDT` |
-| `RUNESXUSDT` | `RUNESXBITCOINUSDT` |
-| `SOPHUSDC` | `SOPHNEWUSDC` |
-| `SPACEUSD1` | `SPACENEWUSD1` |
+An instrument's depth can be filed under its canonical symbol while its klines and trades use
+another spelling. In the shipped rows, 64 spot instruments are like that: their era-2 depth
+(`quotes`) series carries no `url_symbol`, and their klines and trades series carry the other
+spelling (`LIQUIDIUMUSDT` as `LIQUIDIUMTOKENUSDT`, `KAONUSDT` as `AKROUSDT`, `TXUSDT` as
+`COREUMUSDT`).
 
 Two instruments of one market may share an archive spelling (41 spellings across 298 series in the
 shipped rows), because bitget re-issues tickers and moves streams between names. That is not an

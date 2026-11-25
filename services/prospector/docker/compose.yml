@@ -26,8 +26,7 @@ services:
     container_name: prospector
 
     environment:
-      # The shared secret every request must carry in `x-catalog-token`; the
-      # same one the catalog checks.
+      # The shared secret every request must carry in `x-catalog-token`.
       #
       # Empty is allowed and means the check is off. The service warns loudly on
       # startup, so an open collector is a decision somebody took rather than one

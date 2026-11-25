@@ -30,8 +30,8 @@ export const okx: Adapter = declare({
 
   /**
    * A missing key answers `404` and a refusal `403`, so one 404 settles a key:
-   * `'drop'` sets it down at once rather than leaving it to be confirmed. Kept
-   * deliberately; see `docs/planning/CATALOG.md`.
+   * `'drop'` sets it down at once rather than leaving it to be confirmed, which
+   * is what keeps probing okx affordable.
    */
   ruleOnFailure: (_row, status) => (status === 404 ? 'drop' : null),
 

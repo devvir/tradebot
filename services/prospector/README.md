@@ -14,7 +14,7 @@ How it works: [docs/services/PROSPECTOR.md](../../docs/services/PROSPECTOR.md).
   mounts the host's `CATALOG_DIR` there and refuses to start without it. The container runs as uid
   1000, so the host directory must be writable by it.
 - **Ports.** `8080` is the private API (surveys, status, reports, lenses), reached as
-  `http://prospector:8080` on the module network; no host port is published. `3000` serves
+  `http://prospector:8080` on the shared compose network; no host port is published. `3000` serves
   `GET /health` for the container healthcheck; it is not published either.
 - **Nothing is surveyed unasked.** A venue starts when the API is asked to survey it
   (`POST /surveys`). From then on it is enrolled: it is re-read every 24 hours and resumed after a
