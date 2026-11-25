@@ -5,14 +5,12 @@ import type { RabbitMQ, Service } from '@devvir/service-kit';
 // ── Public ────────────────────────────────────────────────────────────────────
 
 /**
- * End the process with exit code 1 when a broker connection is lost for good: the consumer
- * broker disconnects or aborts (it does not reconnect), or the publisher gives up reconnecting.
- * A broker that is closed on purpose emits neither event.
+ * End the process with exit code 1 when the consumer broker loses its connection: it disconnects
+ * (it does not reconnect) or aborts. A broker that is closed on purpose emits neither event.
  */
-export const exitOnBrokerLoss = (consumer: RabbitMQ.Broker, publisher: RabbitMQ.Broker): void => {
+export const exitOnConsumerLoss = (consumer: RabbitMQ.Broker): void => {
   consumer.on('disconnect', () => exit('The consumer lost its RabbitMQ connection; exiting'));
   consumer.on('abort', (err?: Error) => exit('The consumer could not connect to RabbitMQ; exiting', err));
-  publisher.on('abort', (err?: Error) => exit('The publisher gave up reconnecting to RabbitMQ; exiting', err));
 };
 
 /** Answer the service health check: 200 while both brokers are connected, 503 otherwise. */

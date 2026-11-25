@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { exitOnBrokerLoss, answerHealthCheck } from '../src/lifecycle';
+import { exitOnConsumerLoss, answerHealthCheck } from '../src/lifecycle';
 
 vi.mock('@devvir/service-kit', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -30,7 +30,7 @@ const makeService = () => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('exitOnBrokerLoss', () => {
+describe('exitOnConsumerLoss', () => {
   let exit: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
@@ -41,26 +41,20 @@ describe('exitOnBrokerLoss', () => {
     exit.mockRestore();
   });
 
-  it.each([
-    ['consumer', 'disconnect'],
-    ['consumer', 'abort'],
-    ['publisher', 'abort'],
-  ] as const)('exits with code 1 when the %s emits %s', (which, event) => {
-    const brokers = { consumer: makeBroker(), publisher: makeBroker() };
+  it.each(['disconnect', 'abort'] as const)('exits with code 1 when the consumer emits %s', (event) => {
+    const consumer = makeBroker();
 
-    exitOnBrokerLoss(brokers.consumer as any, brokers.publisher as any);
-    brokers[which].emit(event, new Error('gone'));
+    exitOnConsumerLoss(consumer as any);
+    consumer.emit(event, new Error('gone'));
 
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it('keeps running while the publisher reconnects', () => {
-    const consumer  = makeBroker();
-    const publisher = makeBroker();
+  it('keeps running while the consumer is connected', () => {
+    const consumer = makeBroker();
 
-    exitOnBrokerLoss(consumer as any, publisher as any);
-    publisher.emit('disconnect');
-    publisher.emit('connect');
+    exitOnConsumerLoss(consumer as any);
+    consumer.emit('connect');
 
     expect(exit).not.toHaveBeenCalled();
   });
