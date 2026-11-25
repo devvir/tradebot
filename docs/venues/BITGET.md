@@ -60,12 +60,6 @@ behind Cloudflare: roughly one request a second sustained, 429 above that, and a
 instead of JSON without a browser `User-Agent` and a `cf_clearance` cookie. A client that treats a
 challenge or a 429 as "no results" records silence as fact.
 
-#### Files land two days late, at 03:00 UTC
-
-Day `D` is published at `D+2` 03:00 UTC to the minute, measured across eight consecutive days of
-`BTCUSDT` spot klines and the same for trades and depth. So the newest day the archive can hold is
-always two behind. The cadence slips: on 2026-08-21 the 18th was still absent, 21 hours past due.
-
 #### Buckets cut at 16:00 UTC, not midnight
 
 A file named `20250101` covers **2024-12-31 16:00 → 2025-01-01 16:00 UTC** — midnight in UTC+8.
@@ -185,8 +179,7 @@ with identical row counts, first and last timestamps, and md5 of the uncompresse
 zip containers differ. The download index consistently attributes that day to the old name.
 
 **Klines do not cut cleanly at all**: era-2 candlestick keys exist for scattered days years before
-that era began. It is the same arrangement as the trades overlap — a day served under both eras'
-names, holding one export twice — and the boundary is a change of shape, not of content.
+that era began, so a day can be served under both eras' names.
 
 **440 era-2 kline keys are dated before 2024-04-19** (237 perp, 203 spot): 417 duplicate an era-1
 key for the same day, and 23 are that day's only copy. Measured on 2026-10-02 (klines `1m`, both
@@ -195,20 +188,31 @@ lines):
 | | perp | spot |
 |---|---|---|
 | era-2 kline keys dated before 2024-04-19 | 237 | 203 |
-| … with an era-1 key for the same day, same candles | 229 | 188 |
+| … with an era-1 key for the same day | 229 | 188 |
 | … the only copy of that day | 8 | 15 |
 
 The days are scattered — 2019-08-01 to 2023-02-21, mostly `BTCUSDT` and `XRPUSDT` — and the index
-lists the era-2 key for every one of them. Where both are served the content is the same: the era-2
-export writes lowercase headers (`basevolume`) and the shortest float, the era-1 one camelCase and the
-full binary expansion. The trades day is the other way round: for 2024-04-18 the index lists the
-era-1 key of every instrument, and era 2's copy is the duplicate.
+lists the era-2 key for every one of them. The trades day is the other way round: for 2024-04-18 the
+index lists the era-1 key of every instrument, and era 2's copy is the duplicate.
 
 **Twenty of the only-copy days are holes in a continuous era-1 series**, with the days either side
 held in era 1 — 2020-02-29 (`BTCUSDT`, `XRPUSDT` perp, `XRPUSDT` spot), 2023-01-05 and 2023-02-21.
 For those days the file sits only at the era-2 key: `kline/{S}/UMCBL/{YYYYMMDD}.zip` on the futures
 line, `kline/{S}/SP/{YYYYMMDD}.zip` on spot. The other three are isolated files, with no era-1 days
 around them.
+
+**Where both kline copies hold data, they hold the same candles**: every pair unpacked and compared
+on 2026-10-08 (ten of them) matched time for time and value for value. Only the export differs: the
+era-2 one writes lowercase headers (`basevolume`) and the shortest float, the era-1 one camelCase and
+the full binary expansion. The era-2 copy was written later: for perp `ADAUSDT` 2022-01-19 the era-1
+file's `Last-Modified` is 2022-11-01 and the era-2 one's 2024-07-30.
+
+**Some era-1 copies are empty**: a 22-byte zip with nothing in it, where the era-2 key holds the full
+day. Perp `ADAUSDT` 2022-04-03 answers 22 bytes at `kline/ADAUSDT/ADAUSDT_UMCBL_1min_20220403.zip`
+and 64,051 at `kline/ADAUSDT/UMCBL/20220403.zip`; perp `BNBUSDT` 2022-01-19 and 2022-05-18 are the
+same. Of 75 perp pairs compared on 2026-10-08 (seven `…USDT` symbols, 2022-01-19 to 2023-01-05), ten
+era-1 files were empty. How many era-1 kline files are empty across the archive has not been
+measured, and the table above counts keys, not their contents.
 
 #### Every shape, and the token rules
 
@@ -316,10 +320,10 @@ in `fileUrl`. From 2026-08-19 some rows carry `<displayName>-<real basename>` in
   appear nowhere in it.
 - **It lists keys that do not exist.** Two spot kline series on the naming retired 2024-04-18,
   `BLZ/USDT` and `WAVES/USDT`, had 1,113 files listed and none served: every one answers `403`
-  from the origin, which serves those symbols' other shapes with `200`.
+  from the origin, which serves those symbols' other shapes with `200`. Measured in September 2026.
 - **It goes quiet about recent days long before the archive does.** Days it withheld for over a week
   were in the archive all along, at full strength and under the shapes already known. The newest
-  date it returns is a lower bound on what exists, never the archive's end.
+  date it returns is a lower bound on what exists, never the archive's end. Observed in August 2026.
 
 **The REST APIs — two of them, and they are different systems.** See below.
 
@@ -545,22 +549,15 @@ Those files are also not a copy of the futures ones. Measured on matched timesta
 a consistent 0.4–0.5 and the `/1/` file carries two rows per timestamp with different books, so
 whatever the venue is filing there, it is not the `/2/` stream under another name.
 
-### It publishes a day two days later
+### Publication
 
-**Bitget is the slowest of the eight venues by a factor of two**, and it is a
-wall rather than a tendency. Measured from its own `Last-Modified` over 28,992
-files of 2026-09-15 to 21, a day's file appears **52.9 hours (p99) after that day
-begins** — p50 51.0, worst 53.0, so the whole distribution sits inside two hours.
+Day `D` appears at `D+2`, around 03:00 UTC. Measured from the archive's own `Last-Modified` over
+28,992 files of 2026-09-15 to 2026-09-21, a file appears **51.0 hours (p50) after 00:00 UTC of the
+day it is named for**, 52.9 at p99 and 53.0 at worst: the whole distribution sits inside two hours.
+Across eight consecutive days of `BTCUSDT` spot klines, trades and depth, each day landed at `D+2`
+03:00 UTC to the minute. So the newest day the archive holds is two days behind.
 
-Confirmed independently against the catalog: on 2026-09-25, of 4,393 active daily
-series across all four of its daily datasets, **not one** held a file for
-yesterday or the day before, and 4,392 held exactly the day before that.
-
-So the adapter declares `probingLag: 4` — a day further back again than the
-measurement requires, since nothing fixes a venue's publishing hour. Asking any
-closer spends one probe per series per night on a file that cannot exist, and the
-patience window then spends it again the following night: two thirds of what its
-update asked, before this was measured.
+The cadence slips: on 2026-08-21 the file for the 18th was still absent, 21 hours past due.
 
 ### Open questions
 
