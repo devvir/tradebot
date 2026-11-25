@@ -2,9 +2,11 @@
 #
 # Shared infrastructure for the data collection server.
 #
-# Abstract service names:
-#   queue      — batch/general message broker (archeologist, packer pattern)
+# Hostnames on the shared network:
+#   queue      — batch / general message broker
 #   queue-rt   — real-time message broker
+
+name: store
 
 services:
   queue:

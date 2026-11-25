@@ -19,4 +19,11 @@ services:
     volumes:
       - ../../../:/live
 
+    # Rotated: at most five files of 50 MB each.
+    logging:
+      driver: local
+      options:
+        max-size: "50m"
+        max-file: "5"
+
     restart: on-failure

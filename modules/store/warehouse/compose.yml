@@ -11,7 +11,7 @@
 # reads them, and the mount enforces that rather than trusting the code.
 
 # Docker Compose Project
-name: store
+name: warehouse
 
 include:
   - path: ../../../services/stocker/docker/compose.yml

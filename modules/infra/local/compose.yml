@@ -1,14 +1,12 @@
 # Local Infra — Development Server
 #
-# Full shared infrastructure for local development.
-# Covers all server roles simultaneously.
+# Shared infrastructure for local development.
 #
-# Two RabbitMQ instances isolate RT feed traffic from batch processing traffic.
-#
-# Abstract service names (used by all services as hostnames):
-#   queue      — general / batch message broker
+# Hostnames on the shared network:
 #   queue-rt   — real-time live data message broker
-#   redis      — cache
+#   cache      — cache
+#
+# It runs no general / batch broker: `queue` is not defined here.
 
 name: infrastructure
 
@@ -50,8 +48,6 @@ services:
 volumes:
   # queue-data:
   queue-rt-data:
-  # db-data:
-  # db-config:
   cache-data:
 
 networks:

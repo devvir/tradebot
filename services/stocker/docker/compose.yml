@@ -65,4 +65,11 @@ services:
       retries: 3
       start_period: 10s
 
+    # Rotated: at most five files of 50 MB each.
+    logging:
+      driver: local
+      options:
+        max-size: "50m"
+        max-file: "5"
+
     restart: unless-stopped

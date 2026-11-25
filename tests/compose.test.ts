@@ -1,7 +1,8 @@
 /**
  * What `docker compose config` makes of every compose file: where each port is
- * published, and which credentials the broker and the cache refuse to start
- * without. Skipped where docker compose is not installed.
+ * published, which credentials the broker and the cache refuse to start
+ * without, which project each module and pack is, and how logs rotate. Skipped
+ * where docker compose is not installed.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -43,8 +44,9 @@ interface Service {
   command?: string[];
   healthcheck?: { test?: string[] };
   volumes?: Array<{ source?: string; target: string }>;
+  logging?: { driver?: string; options?: Record<string, string> };
 }
-type Rendered = { ok: true; services: Record<string, Service> } | { ok: false; error: string };
+type Rendered = { ok: true; name: string; services: Record<string, Service> } | { ok: false; error: string };
 
 /** Renders `file` with exactly `env`: no shell variables and no .env file. */
 const render = (file: string, env: Record<string, string | undefined>): Rendered => {
@@ -55,7 +57,9 @@ const render = (file: string, env: Record<string, string | undefined>): Rendered
   );
   if (result.status !== 0) return { ok: false, error: result.stderr };
 
-  return { ok: true, services: JSON.parse(result.stdout).services ?? {} };
+  const config = JSON.parse(result.stdout);
+
+  return { ok: true, name: config.name, services: config.services ?? {} };
 };
 
 const services = (file: string, env: Record<string, string | undefined>): Record<string, Service> => {
@@ -65,12 +69,27 @@ const services = (file: string, env: Record<string, string | undefined>): Record
   return rendered.services;
 };
 
+const projectName = (file: string): string => {
+  const rendered = render(file, required);
+  if (!rendered.ok) throw new Error(`${file} does not render: ${rendered.error}`);
+
+  return rendered.name;
+};
+
 const ports = (rendered: Record<string, Service>): Array<[string, Port]> =>
   Object.entries(rendered).flatMap(([name, service]) => (service.ports ?? []).map((port): [string, Port] => [name, port]));
 
 /** Every *_BIND variable any compose file reads. */
 const bindVariables = [...new Set(files.flatMap((file) =>
   [...readFileSync(join(root, file), 'utf8').matchAll(/\$\{([A-Z0-9_]+_BIND)\b/g)].map((match) => match[1])))];
+
+describe('the infra packs', () => {
+  const packs = readdirSync(join(root, 'modules/infra'), { withFileTypes: true }).filter((entry) => entry.isDirectory());
+
+  it.each(packs.map((pack) => pack.name))('%s starts only when named', (pack) => {
+    expect(existsSync(join(root, 'modules/infra', pack, '.dxskip'))).toBe(true);
+  });
+});
 
 describe.skipIf(!hasCompose)('compose files', () => {
   it('finds the modules, packs and services', () => {
@@ -103,6 +122,31 @@ describe.skipIf(!hasCompose)('compose files', () => {
 
       expect(health).toEqual([]);
     });
+
+    it('rotates every service\'s logs', () => {
+      const unrotated = Object.entries(services(file, required))
+        .filter(([, service]) => service.logging?.driver !== 'local'
+          || service.logging.options?.['max-size'] !== '50m'
+          || service.logging.options?.['max-file'] !== '5')
+        .map(([name]) => name);
+
+      expect(unrotated).toEqual([]);
+    });
+  });
+
+  it('gives every module and pack a project of its own', () => {
+    const modules = files.filter((file) => file.startsWith('modules/'));
+    const names = modules.map(projectName);
+
+    expect(new Set(names).size).toBe(modules.length);
+  });
+
+  it.each(files.filter((file) => file.startsWith('modules/infra/')))('%s serves any cache as `cache`', (file) => {
+    const caches = Object.entries(services(file, required))
+      .filter(([, service]) => service.image?.startsWith('redis:'))
+      .map(([name]) => name);
+
+    expect(caches).toEqual(caches.length ? ['cache'] : []);
   });
 
   it('opens one port without opening the others', () => {

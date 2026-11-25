@@ -2,10 +2,10 @@
 #
 # Shared infrastructure for the model training / replay server.
 #
-# Abstract service names:
+# Hostnames on the shared network:
 #   queue-rt   — replay data pipeline message broker
 
-name: infrastructure
+name: infra-bootcamp
 
 services:
   queue-rt:

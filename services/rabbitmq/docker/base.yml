@@ -1,5 +1,6 @@
 # RabbitMQ base service definition.
-# Extend this in infra pack composes to create named instances (queue, queue-rt, etc.)
+# Meant to be extended: each instance sets its own hostname, container_name,
+# ports and data volume.
 
 services:
   rabbitmq:
@@ -24,6 +25,13 @@ services:
       timeout: 30s
       retries: 5
       start_period: 15s
+
+    # Rotated: at most five files of 50 MB each.
+    logging:
+      driver: local
+      options:
+        max-size: "50m"
+        max-file: "5"
 
     restart: unless-stopped
 

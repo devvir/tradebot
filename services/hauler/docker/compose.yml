@@ -30,7 +30,7 @@ services:
       # The catalog lens to haul through (default: none — every catalogued file)
       HAULER_LENS:        ${HAULER_LENS:-}
 
-      # Concurrent fetches per venue; venues never wait on each other
+      # Files in flight across every venue together; one budget for the link
       HAULER_CONCURRENCY: ${HAULER_CONCURRENCY:-100}
       HAULER_MIN_FREE_GB: ${HAULER_MIN_FREE_GB:-25}
 
@@ -56,5 +56,12 @@ services:
     # short and leaves a .part, which the next start removes, and the file is
     # fetched again.
     stop_grace_period: 30s
+
+    # Rotated: at most five files of 50 MB each.
+    logging:
+      driver: local
+      options:
+        max-size: "50m"
+        max-file: "5"
 
     restart: unless-stopped

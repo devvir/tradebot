@@ -1,5 +1,5 @@
 # Redis Service - In-Memory Cache
-# Provides fast, ephemeral storage and caching. Can be shared across services/modules.
+# Kept on disk with an append-only file, so its data survives a restart.
 
 services:
   redis:
@@ -25,6 +25,13 @@ services:
       timeout: 10s
       retries: 5
       start_period: 15s
+
+    # Rotated: at most five files of 50 MB each.
+    logging:
+      driver: local
+      options:
+        max-size: "50m"
+        max-file: "5"
 
     restart: unless-stopped
 

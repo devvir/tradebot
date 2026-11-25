@@ -1,13 +1,12 @@
 # Shuttle Infra — Data Transformation Server
 #
-# Shared infrastructure for shuttle modules (concierge, student, witness).
-# Shuttle transforms and moves data between server roles.
+# Shared infrastructure for the server that transforms and moves data between
+# server roles.
 #
-# Shuttle does NOT own any databases — all DB access is via remote connection URLs.
-# DB_*_URL vars for source and destination databases are set in the root .env.
-#
-# Abstract service names:
-#   queue    — internal message broker for shuttle transformation pipelines
+# Hostnames on the shared network:
+#   queue    — message broker for transformation pipelines
+
+name: shuttle
 
 services:
   queue:

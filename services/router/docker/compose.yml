@@ -9,6 +9,13 @@ services:
     environment:
       QUEUE_URL: ${QUEUE_URL}
       ROUTER_RULES: ${ROUTER_RULES:-}
+
+      # Backpressure: publishing pauses while any of ROUTER_WATCH_QUEUES (CSV)
+      # holds ROUTER_MAX_READY messages or more. 0 turns it off; a positive
+      # value needs at least one queue to watch.
+      ROUTER_MAX_READY:    ${ROUTER_MAX_READY:-0}
+      ROUTER_WATCH_QUEUES: ${ROUTER_WATCH_QUEUES:-}
+
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: ${APP_ENV:-prod}
 
@@ -16,6 +23,13 @@ services:
 
     volumes:
       - ../../../:/live
+
+    # Rotated: at most five files of 50 MB each.
+    logging:
+      driver: local
+      options:
+        max-size: "50m"
+        max-file: "5"
 
     restart: unless-stopped
 

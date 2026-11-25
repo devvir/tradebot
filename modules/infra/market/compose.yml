@@ -2,13 +2,12 @@
 #
 # Shared infrastructure for the live trading server.
 #
-# Abstract service names:
+# Hostnames on the shared network:
 #   queue      — trading signals / order message broker
 #   queue-rt   — real-time live feed message broker
-#   redis      — fast cache for order/position data
+#   cache      — fast cache for order/position data
 
-include:
-  - path: ../../../services/redis/docker/compose.yml
+name: market
 
 services:
   queue:
@@ -35,9 +34,20 @@ services:
     volumes:
       - queue-rt-data:/var/lib/rabbitmq
 
+  cache:
+    extends:
+      file: ../../../services/redis/docker/compose.yml
+      service: redis
+    container_name: cache
+    ports:
+      - "${CACHE_BIND:-127.0.0.1}:${CACHE_PORT:-}:6379"
+    volumes:
+      - cache-data:/data
+
 volumes:
   queue-data:
   queue-rt-data:
+  cache-data:
 
 networks:
   default:
