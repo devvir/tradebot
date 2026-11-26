@@ -5,7 +5,7 @@ of it is in this folder or in the code, so nothing outside the repository is nee
 
 ## State
 
-- Branch `claude/adoring-cannon-wz6r9j`. It is **not merged**. Its base is commit `ac10a6c` ("Catalog-UI: redesign, restyling").
+- Branch `full-review-nov26`. It is **not merged**. Its base is commit `ac10a6c` ("Catalog-UI: redesign, restyling").
 - 270 or so commits, about 800 files changed: fixes with tests, a full docs rewrite and restructure, and the BitMEX path retired.
 - Everything passes on the branch head: `pnpm -r build`, `pnpm typecheck` (source and test files), `npx knip`, `pnpm test`
   (about 4,550 tests), and every CI run since #44. Runs #1 to #43 failed only while the work was in progress; CI itself was added
