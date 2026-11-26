@@ -1,0 +1,682 @@
+# Hauler review: consolidated findings
+
+Unit: `services/hauler/**`. Sources: two review lenses (correctness-security, efficiency-quality-testing), each with a first verifier and, for high findings, a second independent verifier. No repository files were modified. Reproduction tests live under `reviews/2026-11/units/scratch/` (hauler/, hauler-v2/, hauler-verify/, hauler-repro/, v2-hauler-f1/, v5-hauler-f2/).
+
+## Overall assessment
+
+Hauler is small, well structured and carefully documented. Its tests use real HTTP servers and a real filesystem rather than mocks. All 50 tests pass, and line coverage is 93-97% for every file except index.ts, which is excluded and untested. The happy path follows the partial, then verify, then rename rule correctly. The defects sit at its edges, in three groups. (1) Waiting while holding shared resources. A fetch waiting for an address that is out of rotation, or in retry backoff, keeps its global concurrency turn. One rate-limited venue therefore stalls every venue (reproduced three times independently). Those waits are bare setTimeouts that abandon() cannot interrupt, so a stop can overrun Docker's grace period and lose page reports. Retry-After values are not capped. (2) Error handling that cannot tell kinds of failure apart. Local filesystem errors escaping haul() reject the walk while its workers and lister keep running unsupervised: the page is never reported and walks overlap on the same keys (reproduced twice independently). Inside retrieve(), one catch treats disk errors (ENOSPC, EACCES, ENOTDIR) as host faults. The file is downloaded three times and the address's score is cut. (3) The byte-for-byte promise is weaker than the docs say. There is no fsync before the rename or the report. fetch() asks for gzip and decodes it, so objects stored with Content-Encoding are archived decoded. The file on disk is moved to .bak before its replacement has arrived. Docs are thorough but have drifted. HAULER_CONCURRENCY is described as per venue in types.ts and compose and as global elsewhere. The claim that an old mtime marks a file the catalog no longer lists is false, and following it would delete good archives. HAULER.md duplicates the catalog's key-layout article (with a different level name), contains history, and frames hauler around prospector. Recommended restructuring, which both lenses arrived at independently: (a) model 'waiting for a host', 'backing off' and 'waiting for a large slot' as states that hold no budget slot, so only transferring holds one; (b) one abortable sleep(ms, signal); (c) split retrieve() into a pure status classifier, a download step (raw bytes with no content decoding, MD5 hashed in-stream, fsync) and a verify/commit step, with a LocalError type so disk failures never count against a host. Doing (a) to (c) as one refactor fixes HAU-01, 02, 03, 04, 05, 06 and 20 together and makes HAU-17/18 easy to fix and test. Extract index.ts's loop and shutdown into an importable module first (HAU-12), so the refactor has tests around it.
+
+Decisions: 21 implement, 3 defer, 3 rejected.
+
+## Summary
+
+| id | severity | category | decision | title |
+|---|---|---|---|---|
+| HAU-01 | high | robustness | IMPLEMENT | An exception escaping haul() rejects the walk while its workers and lister keep running; the page is never reported and walks overlap on the same keys |
+| HAU-02 | high | correctness | IMPLEMENT | A fetch waiting for an out-of-rotation address (or in backoff) holds its global concurrency turn, so one rate-limited venue stalls every venue |
+| HAU-03 | high | robustness | IMPLEMENT | No fsync of the partial or the directory before the rename and the report, so a power loss can leave a truncated file the catalog records as downloaded forever |
+| HAU-04 | medium | correctness | IMPLEMENT | fetch() requests and transparently decodes Content-Encoding, so objects stored with Content-Encoding are archived decoded rather than byte-for-byte |
+| HAU-05 | medium | robustness | IMPLEMENT | Waits cannot be interrupted at shutdown and Retry-After has no upper limit, so a stop can overrun the grace period and lose page reports |
+| HAU-06 | medium | robustness | IMPLEMENT | Local disk errors (ENOSPC, EDQUOT, EACCES, ENOTDIR, EISDIR) are treated as host failures: retried 3 times, charged to the address, never named as a disk problem; inodes are not checked |
+| HAU-07 | medium | robustness | IMPLEMENT | The file on disk is moved to .bak before a verified replacement is in hand, so a failed or unreached download leaves the canonical path empty |
+| HAU-08 | medium | docs | IMPLEMENT | Docs claim an old mtime marks a file the catalog no longer lists; files downloaded in earlier passes are never listed again and keep old dates, so following the docs would delete good archives |
+| HAU-09 | medium | efficiency | IMPLEMENT | Large files block a venue's small files: workers park on the six-wide large semaphore while holding their queue item |
+| HAU-10 | medium | docs | IMPLEMENT | Outdated and contradictory statements across hauler's docs, docblocks and comments (concurrency scope, refusals, state, stopping, health, test setup, hostToAsk, Walked.listed) |
+| HAU-11 | medium | docs | IMPLEMENT | HAULER.md breaks the repo's doc rules: duplicates the catalog's key-layout article (with a diverged level name), duplicates the report contract, contains history, and frames hauler around prospector |
+| HAU-12 | medium | testing | IMPLEMENT | index.ts (walk cadence, held drop, untilAnswered, shutdown) is untested and cannot be imported; extract it into an injectable module |
+| HAU-13 | medium | testing | IMPLEMENT | Coverage gaps: shared budget, catalog failure paths, report bodies, several retrieve branches, and verification/config edge cases |
+| HAU-14 | medium | efficiency | DEFER | No resume: any mid-body error, or a stop, discards the partial of a large file and restarts from byte 0 |
+| HAU-15 | low | robustness | IMPLEMENT | Held mismatched downloads pile up in scratch until the venue owes nothing, and are dropped on the wrong condition (listed counts only settled pages) |
+| HAU-16 | low | efficiency | DEFER | A persistent mismatch (served bytes disagree with the venue's own description) is re-downloaded on every walk |
+| HAU-17 | low | correctness | IMPLEMENT | '403 on every attempt' is decided by the last attempt's status only |
+| HAU-18 | low | correctness | IMPLEMENT | A CDN's 404 is reported 'failed' while the listed bucket address is out of rotation and was never asked; hostToAsk's fallback can re-pick a tried, failing CDN |
+| HAU-19 | low | correctness | IMPLEMENT | Mismatched reports omit the MD5 hauler computed, though the catalog accepts an ETag |
+| HAU-20 | low | efficiency | IMPLEMENT | Every download is written, then read back in full for its MD5, sometimes for a digest that is then ignored |
+| HAU-21 | low | robustness | DEFER | Venues and their addresses are read from the catalog once at startup and never refreshed |
+| HAU-22 | low | testing | IMPLEMENT | Wall-clock and overlap-dependent assertions make some tests timing-sensitive; config tests re-import service-kit cold |
+| HAU-23 | low | code-quality | IMPLEMENT | Dead code and test hooks: unused _test_ exports, an unreachable backoff cap, an orphaned docblock |
+| HAU-24 | low | code-quality | IMPLEMENT | The multipart-ETag explanation is repeated in two docblocks; Retry-After and jitter helpers duplicate prospector's |
+
+Suggested order: HAU-12 (extract run.ts so the loop can be tested) first. Then the worker/retrieve refactor (HAU-01, 02, 05, 06, 09, 17, 18). Then the writePartial rewrite (HAU-03, 04, 20). Then HAU-07, 15, 19. The doc fixes (HAU-08, 10, 11) are independent, except HAU-10 items 7-8, which follow HAU-18 and HAU-02.
+
+## HAU-01: An exception escaping haul() rejects the walk while its workers and lister keep running; the page is never reported and walks overlap on the same keys
+
+- **Severity:** high
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:47-85 (touch :53, backup :60, held commit :74)`
+  - `services/hauler/src/venue.ts:122 (low()/statfs)`
+  - `services/hauler/src/venue.ts:136-149`
+  - `services/hauler/src/venue.ts:160`
+  - `services/hauler/src/venue.ts:249-271 (fetchOne)`
+  - `services/hauler/src/store.ts:101-105 (touch)`
+  - `services/hauler/src/store.ts:115-125 (backup)`
+  - `services/hauler/src/index.ts:56-74`
+  - `services/hauler/docker/compose.yml:41 (user 1000:1000)`
+
+**Problem.** In haul(), the steps before retrieve() run outside any try: agrees()/md5, touch() (utimes), backup() (rename), and commit() on the held branch. low()->statfs in the worker is unguarded too. fetchOne has no catch, and the worker's try/finally skips `--leaf.left`, so `Promise.all(workers)` rejects on the first throw. done() does not change, so the other workers and list() keep fetching and listing in the background. The page holding the throwing file is never reported, while orphaned workers go on reporting the other pages. index.ts logs 'Walk failed' and starts a new walk after QUIET_MS while the orphan is still running. Two hauls of one key can then share partialOf(path), which is opened with flags 'w', and corrupt a committed file. A persistent cause (EPERM from utimes on an adopted file owned by another uid, since the container runs as uid 1000) throws on every walk. The page's other files are then re-verified on every walk, and another orphan is left behind each time.
+
+**Evidence.** Reproduced three times independently: reviews/2026-11/units/scratch/hauler/orphan.test.ts (f0.bak is a directory, so EISDIR: walk rejected, 6 more files fetched afterwards, 0 reports), reviews/2026-11/units/scratch/hauler-v2/orphan2.test.ts (same result), and reviews/2026-11/units/scratch/v5-hauler-f2/nomock.test.ts (no mocks: page 1 never reported, pages 2-3 reported by the orphan). Confirmed as uid 1000 that utimes on a root-owned mode-666 file returns EPERM. Also reproduced with touch mocked to EPERM (reviews/2026-11/units/scratch/hauler-repro/orphan.test.ts).
+
+**Fix.**
+
+1. venue.ts fetchOne: wrap `await haul(file)` in try/catch. On error, `logger.error({ venue, key: object.Key, err }, 'Could not haul — stays owed')`, `leaf.unreached++`, return. Every object then reaches `--leaf.left` and the settle check. Keep the existing `if (done()) continue` path without a decrement, so the partial-page logic at venue.ts:170 still works. Keep handBack/handBackLarge in the finally.
+2. venue.ts low(): catch statfs errors, log them, and return the last known `looked.low`. Never throw after `next` was shifted.
+3. fetch.ts haul(): make touch best-effort: `await touch(path).catch(err => logger.warn({ key: file.key, err }, 'Present and verified, but its date could not be set'))`, then still return 'present'. If md5/backup/commit/discard in the pre-retrieve section throw, log and return `{ outcome: 'unreached' }`.
+4. Backstop in walkVenue: use `Promise.allSettled` on the workers. On any rejection set a local `broken = true` that done() also returns, call stir(), and await `listed` before rethrowing. A walk's promise must never settle while its workers still run.
+5. Optional, defence in depth: a module-level Set of keys in flight in fetch.ts. haul() returns 'unreached' at once for a key already in it.
+Note: settle()->report() is NOT a second trigger. report() catches its own errors (catalog.ts:48-60, checked); the L2 first verifier was wrong on this point.
+
+**Tests to add.** walk.test.ts: (a) f0 on disk with the wrong size and `f0.bak` a non-empty directory (no mock needed): the walk resolves, walked.unreached === 1, and the rest of the page is reported. (b) touch rejects with EPERM (spy on store.touch or mock utimes) for a present, correct file: the walk resolves and the key is reported. (c) After walkVenue settles, wait ~500 ms and assert the file server got no new requests. (d) freeGb/statfs throws: no worker is left running, and the walk settles only after all workers stop. haul.test.ts: a touch failure still yields 'present'.
+
+**Verifier notes.** Merged from correctness-security F1 and efficiency-quality F2. All four verdicts (two per lens) confirmed it at high. Verifiers added low()/statfs as a further unguarded throw. They noted the concurrent same-key partial write needs timing luck, but the lost report and the orphaned walk alone justify high.
+
+## HAU-02: A fetch waiting for an out-of-rotation address (or in backoff) holds its global concurrency turn, so one rate-limited venue stalls every venue
+
+- **Severity:** high
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/venue.ts:134-147 (turn() held across fetchOne)`
+  - `services/hauler/src/venue.ts:180-199 (global turn/handBack)`
+  - `services/hauler/src/fetch.ts:136`
+  - `services/hauler/src/fetch.ts:301-313 (hostToAsk sleep)`
+  - `services/hauler/src/fetch.ts:213, 246, 285 (backoff sleeps)`
+  - `services/hauler/src/hosts.ts:92-117 (refused)`
+  - `services/hauler/tests/haul.test.ts:198`
+
+**Problem.** The worker takes a turn from the machine-wide budget (`await turn()`) and holds it through fetchOne -> haul -> retrieve. When every address of a server is out of rotation (a 429, any Retry-After, or 5 403s in a row), hostToAsk sleeps until backAt(main) with the turn still held. The backoff sleeps (up to 10 s) hold it too. The budget is FIFO, so that venue's workers keep taking every freed turn and sleeping on it until they hold the whole budget. Every other venue then stalls for the whole outage: 3 to 30 min by default, or any Retry-After length. This contradicts venue.ts:180-189 ('A venue walking alone has the whole budget; several share it') and HAULER.md:268. The haul.test.ts:198 'other venues do not' test calls haul() outside the budget, so it cannot catch this. Bitget's bucket (403 for missing keys) and Bybit's '403 access too frequent' are realistic triggers.
+
+**Evidence.** Reproduced four times independently at concurrency 2, with venue A's only address answering 429 and venue B serving 4 instant files: reviews/2026-11/units/scratch/hauler/starve.test.ts (B took 24 s, then 36 s on re-run), reviews/2026-11/units/scratch/hauler/starve2.test.ts (30 s), reviews/2026-11/units/scratch/hauler-repro (about 12 s, Retry-After 4), reviews/2026-11/units/scratch/v2-hauler-f1/starve.test.ts (16.4 s, with B's requests appearing only at the end of A's out-windows).
+
+**Fix.**
+
+Never sleep while holding a turn. Preferred (keeps the walk moving rather than marking files unreached in a tight loop):
+1. Thread a pause hook through haul -> retrieve, e.g. `haul(file, { pause: <T>(wait: () => Promise<T>) => Promise<T> })`. The walker implements it as `handBack(); try { return await wait(); } finally { await turn(); }`, and does the same with handBackLarge/largeTurn for a large file. Track a `held` boolean so the finally in venue.ts hands back exactly once per turn actually held.
+2. Wrap the hostToAsk wait loop and every `sleep(delayFor(attempt))` in pause(). After reacquiring, check `given.signal.aborted` and done(), so a stop does not begin a new request.
+3. Complement: export `readyAt(venue, server)` from hosts.ts (the earliest outUntil, or now if any address is in rotation). In the worker, before largeTurn()/turn(), wait outside the budget while readyAt > now, using a stop-aware sleep (HAU-05) or polling done() every <= 1 s.
+The verifiers disagree on 'return unreached immediately when no host' (L1 v1's option A): the second verifier showed that on its own the lister then runs through the whole listing marking every file unreached. Use it only together with the pre-turn gate, or not at all.
+Update the fetch.ts:294-299 docblock and HAULER.md:268 to say waiting fetches give their turn back (see HAU-10).
+
+**Tests to add.** walk.test.ts, modelled on starve.test.ts with concurrency 2: venue A's single address answers `429 Retry-After: 2-5`, venue B (started 200 ms later) serves 4 small files. Assert B finishes in < 1-2 s while A is still waiting, and that peak concurrent requests across both servers never exceed 2. Second test: stop during A's wait, and the walk returns promptly with A's files unreached. Use fake timers or a short Retry-After.
+
+**Verifier notes.** Merged from correctness-security F2 and efficiency-quality F1. All four verdicts confirmed it at high. Not critical: nothing is lost, files stay owed, only delayed.
+
+## HAU-03: No fsync of the partial or the directory before the rename and the report, so a power loss can leave a truncated file the catalog records as downloaded forever
+
+- **Severity:** high
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/store.ts:52-62 (writePartial)`
+  - `services/hauler/src/store.ts:65-68 (commit)`
+  - `services/hauler/src/store.ts:9-16, 77-80 (docblock promise)`
+  - `services/hauler/src/venue.ts:52-55 (settle/report)`
+
+**Problem.** writePartial pipes into createWriteStream and returns when the stream finishes. commit() renames without fsyncing the file or the destination directory. The page is then reported, the catalog sets downloaded_at, and `pending=true` never lists the file again (services/catalog/src/listings/listing.ts:137). On ext4 with delalloc, a crash inside the writeback window can leave a newly renamed file empty or short. auto_da_alloc does not cover this case, because the target is new or was moved aside by backup(). The truncation is permanent and silent, which is exactly what the store.ts docblock says the partial/rename rule prevents ('a pulled plug').
+
+**Evidence.** grep for fsync|datasync|sync() across services/hauler/src (and services/*/src) finds nothing. store.ts:57 `pipeline(..., createWriteStream(partial))`, store.ts:67 `rename(partialOf(path), path)`. Confirmed by code trace; a power cut cannot be simulated in the sandbox.
+
+**Fix.**
+
+1. writePartial: use `createWriteStream(partial, { flush: true })` (Node >= 20.10; the repo runs Node 22), or open a FileHandle yourself: `const fh = await open(partial, 'w'); await pipeline(Readable.fromWeb(body), fh.createWriteStream({ autoClose: false })); await fh.sync(); await fh.close()` in a finally, then stat. Prefer sync() over datasync() so the inode size is flushed too.
+2. Directory: after the rename, fsync dirname(path). If mkdir(recursive) created directories (its return value is the first one created), also fsync the parent of the highest. Per-commit is simplest. The cheaper option is to collect dirs in a `Set` on the Leaf and sync them all in settle() before report(), which keeps the required order (the sync lands before the report). Pick per-page if the per-file cost shows on spinning disks.
+3. The held/kept path goes through the same commit(). backup()'s rename can share the directory sync (lower priority).
+4. Update the store.ts docblock to state the guarantee (data and rename are flushed before a file counts as downloaded).
+
+**Tests to add.** Durability cannot be unit-tested, so assert order. vi.mock('node:fs/promises') with a pass-through that records FileHandle.sync (with path) and rename. Assert that writePartial syncs the partial before resolving, and that the directory sync runs after the rename and before the POST to /listings/report (or before haul resolves 'downloaded' when syncing per-commit).
+
+**Verifier notes.** Merged from correctness-security F4 and efficiency-quality F5. Lens 1: both verifiers rated it high. Lens 2: the verifier rated it medium (needs power loss or a kernel crash, not a container kill). Kept high because the outcome is permanent, silent corruption that nothing ever re-checks, and the fix is small. The second verifier notes the exposure is mostly the last files committed before a page's report.
+
+## HAU-04: fetch() requests and transparently decodes Content-Encoding, so objects stored with Content-Encoding are archived decoded rather than byte-for-byte
+
+- **Severity:** medium
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:159`
+  - `services/hauler/src/store.ts:52-62`
+  - `services/hauler/src/fetch.ts:253-255`
+
+**Problem.** Global fetch (undici) sends `Accept-Encoding: gzip, deflate` and decodes `Content-Encoding: gzip|deflate|br` bodies, and writePartial stores the decoded bytes. For an S3 object stored with Content-Encoding metadata (the entity itself is the gzip), the archive gets the decompressed form. With no size and a non-digest ETag, it is committed and reported downloaded: silent corruption. With a known size or MD5, every download mismatches, so the file is re-downloaded on every walk and never archived. The reviewer's second scenario is wrong: when a CDN compresses an identity entity on the fly, decoding restores the right bytes.
+
+**Evidence.** Reproduced by reviewer and verifier: reviews/2026-11/units/scratch/hauler/gzip.test.ts. A 43-byte gzip body with content-encoding: gzip was stored as 1,200 bytes with no gzip magic, and the outcome was 'downloaded'. Accept-Encoding sent: 'gzip, deflate'.
+
+**Fix.**
+
+Download with a client that never decodes the body: node:https get() with `{ 'accept-encoding': 'identity' }` (have writePartial accept a Node Readable directly), or add `undici` as an explicit dependency and use request(). Keep the per-request AbortController and the status/Retry-After handling. Do NOT use the 'content-encoding present -> unreached' fallback. S3 ignores Accept-Encoding: identity for objects stored with Content-Encoding, so that fallback would make those files permanently unfetchable. Where content-length is present, compare it with the bytes written. A short body is a failed transfer: call faltered and retry.
+
+**Tests to add.** haul.test.ts: the server answers `content-encoding: gzip` with a gzip body. The stored file equals the served bytes (starts 0x1f 0x8b), and the request carried `accept-encoding: identity`. Also: a content-length longer than the body is treated as a failed transfer.
+
+**Verifier notes.** Reviewer rated it high. The single verifier lowered it to medium (no second verification at medium): no venue doc shows a venue storing objects with Content-Encoding metadata, and the on-the-fly CDN case is harmless. Medium accepted. The consequence is severe when it does happen, and it is a precondition for replay relying on the archive.
+
+## HAU-05: Waits cannot be interrupted at shutdown and Retry-After has no upper limit, so a stop can overrun the grace period and lose page reports
+
+- **Severity:** medium
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:91-95 (abandon)`
+  - `services/hauler/src/fetch.ts:301-313`
+  - `services/hauler/src/fetch.ts:213, 246, 285`
+  - `services/hauler/src/fetch.ts:322-335 (retryAfter)`
+  - `services/hauler/src/fetch.ts:354 (sleep)`
+  - `services/hauler/src/hosts.ts:98`
+  - `services/hauler/src/index.ts:123-145 (stopAfterFlight)`
+  - `docs/services/HAULER.md:296-302`
+
+**Problem.** sleep() is a bare setTimeout. abandon() aborts only `given` and the in-flight controllers, and hostToAsk's loop never checks given.signal. After abandon(), a fetch waiting on a refused address (3-30 min, or any Retry-After) or in backoff (up to 10 s) keeps `await hauling` pending, and Docker SIGKILLs at 30 s. The final settle loop never runs, so part-done pages go unreported. This breaks HAULER.md's Stopping promise, and the next start must re-hash those files. Separately, retryAfter() and refused() accept any Retry-After (86400 s, or a far-future date) uncapped, whereas the default out-time is capped at LONGEST_OUT_MS (30 min).
+
+**Evidence.** fetch.ts:311 `await sleep(Math.max(backAt(main) - Date.now(), 100))` inside `for (;;)` with no abort check. fetch.ts:330 has no Math.min. hosts.ts:98 caps only when wait is null. Confirmed by both lenses' verifiers through code trace.
+
+**Fix.**
+
+1. Make sleep abortable: `import { setTimeout as delay } from 'node:timers/promises'; const sleep = (ms) => delay(ms, undefined, { signal: given.signal }).catch(() => undefined)`, reading `given` at call time (_test_resume replaces it). A hand-rolled version must remove its abort listener on timeout, or listeners leak onto the long-lived signal.
+2. Check `given.signal.aborted` at the top of hostToAsk's loop (return null) and after every backoff sleep in retrieve (return 'unreached'). Make retrieve tell an abort-null apart from 'no address known'.
+3. Any readiness wait added in venue.ts by HAU-02 must also wake on stop.
+4. Sanity cap in refused(): `Math.min(wait, MAX_RETRY_AFTER_MS)`, logging when the cap applies. Lens 2 suggests LONGEST_OUT_MS (30 min); the lens 1 verifier suggests 1 h. Implement with 1 h unless the owner prefers otherwise (see owner question).
+
+**Tests to add.** haul.test.ts: the only address answers `429 Retry-After: 60/3600`. Start haul(), abandon() after 100 ms, and assert it resolves 'unreached' within 200 ms-1 s. hosts.test.ts: refused(host, 429, 86_400_000) sets outUntil no more than the cap ahead.
+
+**Owner question.** (Non-blocking: implement with the default.) What ceiling should a venue's Retry-After get: 30 min (LONGEST_OUT_MS, same as the default backoff) or 1 h? Honouring a long Retry-After is defensible. The cap only guards against absurd values.
+
+**Verifier notes.** Merged from correctness-security F5 and efficiency-quality F4. Both confirmed at medium. The essential defect is the uninterruptible sleep: even the default 3-min out-time exceeds the grace period. The cost is re-verification on the next start, not data loss.
+
+## HAU-06: Local disk errors (ENOSPC, EDQUOT, EACCES, ENOTDIR, EISDIR) are treated as host failures: retried 3 times, charged to the address, never named as a disk problem; inodes are not checked
+
+- **Severity:** medium
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:218 (writePartial)`
+  - `services/hauler/src/fetch.ts:253 (md5)`
+  - `services/hauler/src/fetch.ts:264 (commit)`
+  - `services/hauler/src/fetch.ts:269-285 (catch)`
+  - `services/hauler/src/store.ts:37-41 (freeGb bavail only)`
+  - `services/hauler/src/store.ts:52-68`
+  - `services/hauler/src/venue.ts:278-283 (low)`
+
+**Problem.** writePartial, md5(partial), commit() (mkdir/rename) and hold() run inside retrieve's network try. Its catch calls faltered(host), which lowers the address's score and weight, marks non-main hosts tried, sleeps, and downloads the whole file again, up to 3 times, before 'Unreachable — stays owed'. The file comes back on every walk, so the cycle repeats indefinitely. A full disk, a quota, a read-only remount or a bad directory permission therefore looks like a flaky venue. freeGb uses only bavail, so inode exhaustion (relevant for ~70M files) never trips low(), and every file then fails this way.
+
+**Evidence.** Reproduced (efficiency lens): a non-empty directory at the destination makes rename fail locally, and the server was hit exactly 3 times with outcome unreached. The catch at fetch.ts:269-285 never inspects the error's origin.
+
+**Fix.**
+
+1. Move md5/settles/hold/commit out of the network try. The try ends after writePartial returns the byte count. Run the verify/commit step in its own try. On error: discard, log at error level with path and code, and return 'unreached' without faltered and without a retry.
+2. In the network catch, tell write-side fs errors from transfer errors. Fs errors carry string `syscall` and `path` (or test `code` against ENOSPC/EDQUOT/EROFS/EACCES/EPERM/EIO/EISDIR/ENOTDIR/EMFILE); undici network errors are TypeError with a `cause`, and read-side 'terminated'/ECONNRESET must stay network failures. Optionally wrap them in `class LocalError`. On a local error: discard, no faltered, no retry, return 'unreached'.
+3. On ENOSPC/EDQUOT, set an exported flag in store.ts that low() treats as low until the next freeGb reading shows space again (or set walked.full).
+4. Extend low() with inodes: `info.files > 0 && info.ffree < Math.max(10_000, info.files * 0.005)`. Make it configurable (HAULER_MIN_FREE_INODES) only if wanted.
+5. Update the HAULER.md free-space section.
+
+**Tests to add.** haul.test.ts: a non-empty directory at the destination (or a parent that is a file, giving ENOTDIR) produces exactly 1 request, outcome 'unreached', and host.errors unchanged. walk.test.ts: statfs mocked with ffree 0 ends the walk with full: true. An ENOSPC from the write side stops the walk taking further files.
+
+**Verifier notes.** Merged from correctness-security F6 and efficiency-quality F3. Both confirmed at medium. Triggers are local failure modes, not normal operation.
+
+## HAU-07: The file on disk is moved to .bak before a verified replacement is in hand, so a failed or unreached download leaves the canonical path empty
+
+- **Severity:** medium
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:51-64 (backup at :60)`
+  - `services/hauler/src/fetch.ts:74 (held commit)`
+  - `services/hauler/src/fetch.ts:84`
+  - `services/hauler/src/fetch.ts:264 (commit)`
+  - `services/hauler/src/store.ts:115-125`
+  - `services/hauler/src/fetch.ts:17-23 (docblock table)`
+  - `docs/services/HAULER.md:168-173, 202-205`
+  - `services/hauler/README.md:31-32`
+
+**Problem.** When an existing file disagrees with the listing, haul() calls backup(path) at once and only then tries to download. If retrieve returns failed (404/410/403) or unreached, the canonical path is empty and the bytes sit in `<name>.bak`, which readers ignore. After 'failed' followed by a prospector ruling of absent, this is permanent: a good adopted copy is lost to readers. When the refetch returns identical bytes (the catalog was wrong), a duplicate .bak is kept forever, and repeating this produces .bak.2, .bak.3, and so on.
+
+**Evidence.** fetch.ts:60 `const aside = await backup(path);` runs before `return await retrieve(file, path)` (fetch.ts:84) whatever the outcome. `aside` is never restored. Confirmed by trace.
+
+**Fix.**
+
+Add `replace(path, digest?)` in store.ts. If measure(path) is null, it only commits. If sizes are equal, it md5s the existing file (and the partial when no digest was given, because digest is '' for non-digest ETags with matching size). If they are equal, it discards the partial and touches the file. Otherwise backup(path), then commit(path). In haul(), delete the backup at :60 and keep only the warn, reworded ('Differs from the catalog — fetching again; the file stays until a verified replacement is in hand'). Use replace at both commit sites (fetch.ts:74 and :264). In the 'present' branch, also `if (taken(file)) await discard(path)` so a held partial is not orphaned when the catalog rules for the file on disk. On failed/unreached/mismatched, leave the existing file in place. Update the fetch.ts:17-23 table, HAULER.md:168-173/202-205 and README.md:31-32 ('moved aside as .bak once a verified replacement has been fetched').
+
+**Tests to add.** haul.test.ts: (1) file on disk differs and the venue answers 404: the original stays, there is no .bak, and the outcome is failed. (2) Same with an unreachable host: the original stays, outcome unreached. (3) The refetch is identical to the file on disk: no .bak. (4) The refetch differs and agrees with the catalog: the old file goes to .bak and the new one is at the path. Adjust the existing test at haul.test.ts:261 to the new order.
+
+**Verifier notes.** Correctness-security F8, confirmed at medium. The verifier extended the fix to cover the second commit site, the empty-digest case and the orphaned held partial.
+
+## HAU-08: Docs claim an old mtime marks a file the catalog no longer lists; files downloaded in earlier passes are never listed again and keep old dates, so following the docs would delete good archives
+
+- **Severity:** medium
+- **Category:** docs
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/store.ts:93-100`
+  - `services/hauler/src/fetch.ts:24-27`
+  - `docs/services/HAULER.md:197-200`
+  - `services/hauler/README.md:27-30`
+
+**Problem.** store.ts:96-99 says that after a pass every file the catalog accounts for carries that pass's date, so an older date marks a file nothing listed, which 'finds itself by its date alone'. HAULER.md and README repeat it. Hauler lists only `pending=true` (downloaded_at IS NULL), so a file downloaded and reported earlier is never listed or touched again. It keeps its download-time mtime (rename preserves the partial's). After any pass, almost every good file has an 'older' date.
+
+**Evidence.** catalog.ts:30/266 lists with pending: 'true'. services/catalog/src/listings/listing.ts:137 `AND f.downloaded_at IS NULL`. touch() is called only from fetch.ts:53 for a listed file. Confirmed end to end.
+
+**Fix.**
+
+Docs only, no code change. store.ts:93-100: 'Mark a file this pass found already on disk and correct: its modification time becomes now. Only files still listed as owed are checked, so a file downloaded and reported earlier is not listed again and keeps the time it was downloaded. A file's date says when hauler last wrote or confirmed it, not whether the catalog accounts for it.' fetch.ts:24-27: drop 'and its new date says this pass accounted for it — see `touch`'. HAULER.md:197-200: replace the 'Touching is deliberate' paragraph with the same statement. README.md:27-30: delete 'So after a pass, a file with an older date is one the catalog did not list.' Add no planning note unless the owner wants the property.
+
+**Tests to add.** None (docs).
+
+**Owner question.** (Non-blocking.) With the claimed property gone, is touch() still worth keeping? If nothing reads mtime, it could be dropped. That would also remove the EPERM trigger in HAU-01. Do you want a non-pending 'audit pass' that would make 'old date = unlisted' true (a planning item)?
+
+**Verifier notes.** Correctness-security F13. Reviewer and verifier rated it medium (above low) because the doc invites data loss.
+
+## HAU-09: Large files block a venue's small files: workers park on the six-wide large semaphore while holding their queue item
+
+- **Severity:** medium
+- **Category:** efficiency
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/venue.ts:111-137`
+  - `services/hauler/src/venue.ts:204-231`
+
+**Problem.** A worker shifts the next object and, if it is large, awaits largeTurn() while holding it. When the head of a venue's queue is many large files (keys sort by dataset/symbol, so trades for big symbols come together), 6 workers fetch and the rest park. The venue's small files further back are not taken. Other venues are unaffected (largeTurn comes before turn()). This contradicts venue.ts:209-211 and HAULER.md ('leave the rest of the budget to the small files') within one venue.
+
+**Evidence.** venue.ts:134-137 `if (large) await largeTurn(); await turn();` with `next` held during the wait. Confirmed by trace (efficiency lens).
+
+**Fix.**
+
+Add a try-acquire `tryLargeTurn(): boolean`. In the worker, when the shifted item is large and tryLargeTurn() fails, push it onto a per-walk `parkedLarge` array and take the next item. Prefer `parkedLarge.shift()` whenever tryLargeTurn() succeeds, and wait on largeTurn only when no small item is queued. Include parkedLarge in the emptiness check (`! next && ! listing && parkedLarge.length === 0`), in the 'more' log and in the lister's back-pressure (queue.length + parkedLarge.length). On done()/full, put parked items back. They were never begun, so leaf.left is unchanged and the end-of-walk settling stays correct.
+
+**Tests to add.** walk.test.ts: listing of 20 large then 20 small, concurrency 10, large served with a 200 ms delay. Assert every small file completes before the 7th large one starts, and that no more than 6 large are ever in flight.
+
+**Verifier notes.** Efficiency-quality F6, confirmed at medium (throughput within one venue, not starvation across venues). It touches the same worker loop as HAU-01/HAU-02, so do them together.
+
+## HAU-10: Outdated and contradictory statements across hauler's docs, docblocks and comments (concurrency scope, refusals, state, stopping, health, test setup, hostToAsk, Walked.listed)
+
+- **Severity:** medium
+- **Category:** docs
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/types.ts:29`
+  - `services/hauler/docker/compose.yml:32-33`
+  - `services/hauler/README.md:38`
+  - `services/hauler/README.md:56`
+  - `docs/services/HAULER.md:22-23`
+  - `services/hauler/docker/compose.yml:57-60`
+  - `services/hauler/src/service.ts:4`
+  - `services/hauler/tests/setup.ts:1-5`
+  - `services/hauler/src/fetch.ts:294-299`
+  - `docs/services/HAULER.md:268`
+  - `services/hauler/src/types.ts:164`
+  - `docs/modules/ARCHIVES.md:57`
+
+**Problem.** (1) types.ts:29 and compose.yml:32 say HAULER_CONCURRENCY is per venue and 'venues never wait on each other'. The code (one module-level budget), README:52, HAULER.md:139 and venue.ts:180-188 say it is shared across all venues. The compose comment is what an operator tunes from. (2) README:38 says a refusal pauses every fetch from the venue. Only the refusing address goes out (a 403 only after 5 in a row). (3) README:56 and HAULER.md:22 say 'keeps no state'. In fact held.ts and hosts.ts hold state in memory within a run. (4) compose.yml:57-60 says an unfinished download 'leaves a .part'. abandon() at 15 s removes it, and only a kill leaves one. (5) service.ts:4 'serves nothing', but /health is served on :3000. (6) tests/setup.ts says CATALOG_API/TOKEN 'have no defaults'. config.ts defaults them to http://catalog:8080 and ''. (7) The fetch.ts:294-299 hostToAsk docblock says 'the listed one' is asked. The code falls back to any address in rotation, including ones already tried. (8) HAULER.md:268 leaves out that waiting fetches hold the global budget (changes with HAU-02). (9) types.ts:164 Walked.listed 'Objects the walk was handed' counts only settled pages. (10) ARCHIVES.md:57 does not list HAULER_MIN_FREE_GB.
+
+**Evidence.** Each item checked against the code by the verifiers. The reviewer's config.ts:480-481 citation is wrong (config.ts:11-17 is right), but the substance holds.
+
+**Fix.**
+
+(1) types.ts:29 -> '/** Fetches in flight across every venue together; a venue walking alone has all of it. */'. compose.yml -> '# Fetches in flight across every venue together'. Also add a comment for HAULER_MIN_FREE_GB. (2) README:38 -> 'A refusal (a 429, any Retry-After, or five 403s in a row) takes the address that refused out of rotation for a while; the server's other addresses carry on (see HAULER.md).' (3) README:56 -> 'Hauler serves only its health check. Its one durable state is the files on disk; what it learns about addresses, and the downloads it holds while the catalog rules on them, are kept in memory and start empty.' HAULER.md:22 -> 'It keeps nothing across a restart but the files on disk…'. (4) compose.yml:57-60 -> 'Files still downloading after 15 s are given up and their partials removed. A container killed before then leaves partials in .hauler-tmp, which the next start removes. Either way the file stays owed.' (5) service.ts:4 -> 'Hauler serves only its health check: it walks the catalog's buckets and writes files.' (6) setup.ts -> 'Config is loaded when a module is imported; tests point it at a catalog that resolves nowhere, so nothing reaches a real one.' (7) hostToAsk docblock: describe what the code does after HAU-18 lands, or today's behaviour ('...where none is, any in rotation, tried or not; where none is in rotation, wait for the listed one'). (8) HAULER.md:268: reword together with HAU-02 ('its fetches wait for it outside the shared budget'). (9) types.ts:164 -> 'Objects of the pages the walk settled; a page listed and never begun is not counted' (or change it with HAU-15). (10) Add HAULER_MIN_FREE_GB to ARCHIVES.md:57.
+
+**Tests to add.** None (docs/comments).
+
+**Verifier notes.** Merged from correctness-security F14 (items 1-8), efficiency-quality F21 (concurrency, rated medium) and F22, plus the README:38 point that the F15 verifier raised. Item 7 depends on HAU-18 and item 8 on HAU-02. Edit them in the same change as those fixes.
+
+## HAU-11: HAULER.md breaks the repo's doc rules: duplicates the catalog's key-layout article (with a diverged level name), duplicates the report contract, contains history, and frames hauler around prospector
+
+- **Severity:** medium
+- **Category:** docs
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `docs/services/HAULER.md:25-118 (layout on disk)`
+  - `docs/services/HAULER.md:3-11`
+  - `docs/services/HAULER.md:19`
+  - `docs/services/HAULER.md:261-263`
+  - `docs/services/HAULER.md:271-278`
+  - `services/hauler/src/store.ts:18-22`
+  - `services/hauler/src/index.ts:15-16`
+  - `services/hauler/README.md:5`
+  - `services/hauler/docker/compose.yml:8-11`
+  - `docs/DATA_PIPELINE.md:90`
+  - `docs/modules/CATALOG-API.md:201-234, 299-309`
+
+**Problem.** One home per subject: HAULER.md:25-112 goes deeper than CATALOG-API.md:201-234 on the catalog's key (field table, separators, '@' ordering, inode cost), although HAULER.md:33 itself says 'The key is the catalog's'. The two already disagree (`FL` vs `F`), and DATA_PIPELINE.md:90 points readers to the duplicate. HAULER.md:271-278 restates CATALOG-API.md:299-309's report contract almost word for word. Only what is true today: HAULER.md:261-263 ('Reporting them as failures had prospector asking...') and store.ts:20-22 ('where partials beside their files meant walking millions of directories') are history. A doc is about its own subject: HAULER.md:3-11 and :19, index.ts:15-16, README.md:5 and the compose header frame hauler around prospector, which is not one of its providers (hauler talks only to the catalog API and to venues).
+
+**Evidence.** HAULER.md:29 `.../FL/symbol/...` vs CATALOG-API.md:205 `.../F/symbol/...`. CATALOG-API.md:299 'A report is prospector's to settle...'. Quoted history sentences as cited.
+
+**Fix.**
+
+1. Cut HAULER.md 'The layout on disk' to hauler's depth: each object is written at `<archives>/<key>`, the key's shape is the catalog's (link to the CATALOG-API.md key section), and a key outside the requested venue is refused. Move any rationale still wanted (positional order, letter directory, separators, instrument before month, inode cost, 'What a canonical name discards') into CATALOG-API.md using `F`, or cut it.
+2. Repoint DATA_PIPELINE.md:90 to the catalog's key section and verify the anchor. Grep docs/ and services/ for '/FL/' and '`FL`'.
+3. Delete HAULER.md:261-263's history sentence. In store.ts:18-22, end at '...is then one directory to delete.'
+4. Replace HAULER.md:271-278 with a sentence plus a pointer: 'Hauler reports what became of each file and does not rule on it; what the catalog does with a report, and why a lost report loses nothing, is in CATALOG-API.md#reporting.' Do NOT write 'settled by the catalog', which contradicts CATALOG-API.md:299.
+5. Re-frame HAULER.md:3-11, :19 ('a venue the catalog adds needs nothing from hauler'), index.ts:15-16, README.md:5 and compose.yml:8-11 against the catalog's listing ('The catalog serves every venue as one bucket; hauler walks it...'). Drop the surveying/hauling-machines sentence. Re-read each edited doc to check it stands alone.
+
+**Tests to add.** None (docs).
+
+**Owner question.** (Non-blocking.) Should the layout rationale (separators, inode cost, '@' ordering) move into CATALOG-API.md, or simply be cut?
+
+**Verifier notes.** Merged from correctness-security F15 (low) and efficiency-quality F23 (medium). The F15 verifier corrected the reviewer: the report-contract text breaks 'one home' (it duplicates CATALOG-API.md), not the dependency direction. Out of scope and noted for the catalog review: docs/modules/CATALOG-LENSES.md:8, a provider doc, names its consumers.
+
+## HAU-12: index.ts (walk cadence, held drop, untilAnswered, shutdown) is untested and cannot be imported; extract it into an injectable module
+
+- **Severity:** medium
+- **Category:** testing
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/index.ts:26-151`
+  - `vitest.config.ts:15-16`
+
+**Problem.** The base config excludes src/index.ts from coverage, and `SK.run(main)` at module scope makes it impossible to import. Its logic is the most likely to regress: FOUND_MS vs QUIET_MS selection, dropHeld on listed === 0 (wrong, see HAU-15), untilAnswered, rest waking on stop, and stopAfterFlight's FLIGHT_MS race then abandon(). Nothing enforces the coupling between FLIGHT_MS (15 s) and compose's stop_grace_period (30 s). Several confirmed defects (HAU-01, 02, 05) would have been caught here.
+
+**Evidence.** Coverage summary (reviews/2026-11/units/scratch/cov-hauler) lists no index.ts. Grep finds no test referencing loop/untilAnswered/stopAfterFlight.
+
+**Fix.**
+
+Create src/run.ts exporting e.g. `makeRunner({ walkVenue, dropHeld, abandon, halt, foundMs, quietMs, flightMs, retryMs, sleep? })`. It returns `{ loop, untilAnswered, stopAfterFlight, start(names) }` and keeps `stopping` and `hauling` in a closure, so each test gets fresh state. index.ts keeps main's wiring (sweep, venues, setHosts) and calls SK.run. Keep index.ts excluded from coverage. No behaviour change. Do this first, so the HAU-01/02/05 fixes land with tests around them.
+
+**Tests to add.** tests/run.test.ts with vi.useFakeTimers or injected short timings: (1) progressed>0 and not full re-walks at FOUND_MS, progressed 0 at QUIET_MS. (2) full waits QUIET_MS and does not drop held. (3) listed 0 calls dropHeld (or the HAU-15 condition), listed>0 does not. (4) A throwing walk is logged and retried after QUIET_MS, and the loop survives. (5) A stop during rest ends the loop within ~1 s. (6) A slow file past flightMs: halt at once, abandon after flightMs, every page still reported, resolves. (7) Nothing in flight: resolves without abandon. (8) untilAnswered retries a rejecting ask every 60 s until it resolves. Optional: assert FLIGHT_MS <= stop_grace_period/2.
+
+**Verifier notes.** Merged from correctness-security F16 (low) and efficiency-quality F17 (medium). Both confirmed. Regression tests for each defect belong with that defect's fix.
+
+## HAU-13: Coverage gaps: shared budget, catalog failure paths, report bodies, several retrieve branches, and verification/config edge cases
+
+- **Severity:** medium
+- **Category:** testing
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/venue.ts:198, 251-253`
+  - `services/hauler/src/catalog.ts:57, 80, 164`
+  - `services/hauler/src/fetch.ts:142-144, 196-198, 235-237`
+  - `services/hauler/tests/walk.test.ts`
+  - `services/hauler/tests/haul.test.ts:250-273`
+  - `services/hauler/tests/config.test.ts`
+
+**Problem.** The verifier re-ran coverage and found these lines uncovered: turn()'s queue push (venue.ts:198; no test exceeds the budget), the unsafe-key path (venue.ts:251-253), catalog's 4xx throw (164), the report-failed warning (57) and halt() (80), and fetch's 'no address known', non-main non-404 and non-main empty-body branches. Walk tests assert only `downloaded` report bodies. The 'moved aside' test uses bodies of different sizes, so the MD5 branch of agrees() for a same-size different file never runs. No test covers uppercase, multipart or unquoted ETags. Config tests do not read HAULER_MIN_FREE_GB from env, and do not test 0/-1/1.5 or trimming of CATALOG_TOKEN.
+
+**Evidence.** vitest coverage: catalog.ts 57,80,164; fetch.ts 142-144,196-198,235-237; venue.ts 198,251-253 (re-run by verifier). haul.test.ts:261-266 'stale one' (9 bytes) vs 'the file' (8 bytes). One correction: config.test does mention HAULER_MIN_FREE_GB (the default 25), but never reads it from env.
+
+**Fix.**
+
+Add tests only (no code change).
+
+**Tests to add.** walk.test.ts: (a) two venues at concurrency 2 through a slow handler: peak <= 2, both complete. (b) Listing answers 422: walkVenue rejects /422/. (c) One key 404s and one serves 'short' with Size 8: the report has `failed: [k1]` and `mismatched: [{ Key: k2, Size: 5 }]` (plus ETag after HAU-19). (d) 'gate/x.zip' under venue binance is neither fetched nor reported. (e) Report endpoint answers 400: the walk still resolves. (f) After halt() with the catalog at 503: 3 attempts, then reject. Add a test hook to reset `halted`. haul.test.ts: no host for the server gives 'unreached'. A non-main 503 moves to main without a sleep. A non-main empty body moves on. place(one, 'THE FILE') (same size, different MD5) is downloaded with a .bak (adjust for HAU-07). An uppercase quoted etag agrees. A multipart '"<hex>-3"' with the right size is 'present' with no MD5. An unquoted md5 etag agrees. Add the 503/503/403 case only with HAU-17. config: HAULER_MIN_FREE_GB='10' gives 10; '0', '-1', '1.5' throw for concurrency (this also forbids HAULER_MIN_FREE_GB=0; check that is intended); CATALOG_TOKEN ' t ' gives 't'. Use _test_parsePositiveInt/_test_parseList directly, or delete them (HAU-23).
+
+**Verifier notes.** Merged from efficiency-quality F18 (medium) and F19 (low). Both confirmed.
+
+## HAU-14: No resume: any mid-body error, or a stop, discards the partial of a large file and restarts from byte 0
+
+- **Severity:** medium
+- **Category:** efficiency
+- **Decision:** DEFER
+- **Locations:**
+  - `services/hauler/src/fetch.ts:159`
+  - `services/hauler/src/fetch.ts:269-271`
+  - `services/hauler/src/store.ts:52-62`
+  - `services/hauler/src/store.ts:84-91 (sweepPartials)`
+
+**Problem.** retrieve's catch discards the partial on every error. abandon() discards partials, and sweepPartials deletes them all at start. No Range/If-Range request is ever made. On a flaky link, a 1 GB file failing at 800 MB on each of 3 attempts transfers 2.4 GB, ends unreached, and repeats on the next walk.
+
+**Evidence.** No 'Range' anywhere in services/hauler/src. fetch.ts:269-271 discards unconditionally. Confirmed.
+
+**Fix.**
+
+Design first in docs/planning. Resume only for files >= LARGE_BYTES whose listing has a digest ETag. Persist `<partial>.json` { etag, size, server }. On retry, send `Range: bytes=<have>-` and `If-Range: <etag>`. On 206 with a matching Content-Range start, append. On 200, truncate. Re-hash the prefix, or resume only within one process. sweepPartials keeps partials that have valid metadata, under an age or size limit. This redesigns the store.ts invariant ('a partial is never a file') and its docs.
+
+**Tests to add.** A server resets after N bytes once and honours Range: total bytes served is about the file size, and the outcome is downloaded with the correct MD5. A server that ignores Range (200), and one whose ETag changed (200 via If-Range).
+
+**Owner question.** Is resuming large downloads worth the added complexity (resume state that must stay valid across addresses and restarts, sweepPartials keeping partials, a redesigned store invariant)? If so, within one process only, or across restarts too? How flaky is the haul machine's link in practice?
+
+**Verifier notes.** Efficiency-quality F10. Confirmed at medium, deferred: it is a design change, not a bounded fix.
+
+## HAU-15: Held mismatched downloads pile up in scratch until the venue owes nothing, and are dropped on the wrong condition (listed counts only settled pages)
+
+- **Severity:** low
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/held.ts:19-49`
+  - `services/hauler/src/index.ts:63-68`
+  - `services/hauler/src/venue.ts:52-61, 168-170`
+  - `services/hauler/src/types.ts:164-165`
+  - `docs/services/HAULER.md:179-181`
+
+**Problem.** A held entry leaves scratch only through taken() (the same key listed again) or dropHeld() when `walked.listed === 0`. Keys that are never listed again (ruled absent, a lens change, refused in a 207) keep their partials, each up to hundreds of MB, on the archives volume, where they count against HAULER_MIN_FREE_GB, for as long as the venue owes anything. Separately, `listed` counts only settled pages. A walk that ends at once because the volume is low has listed 0, and index.ts then drops held downloads that are still awaiting a ruling.
+
+**Evidence.** index.ts:68 `if (walked.listed === 0) await dropHeld(venue);` is the only caller. venue.ts:57 increments listed only in settle(). walk.test 'takes no file while the volume is below its floor' produces full:true with listed 0.
+
+**Fix.**
+
+Generation counter, not a Set of listed keys (that would be millions of keys on a backfill). Add `walk: number` to Withheld and a per-venue counter in held.ts: `startWalk(venue)` increments it, and `dropStale(venue, keepWalks = 2)` discards entries with walk <= counter - keepWalks and returns the count. hold() stamps the counter. In index.ts loop(), call startWalk before walkVenue. After a walk that did not throw, was not full and was not stopped, call dropStale. Change the nothing-owed drop to depend on what the first page said: add `walked.nothingOwed` (the first page empty and not truncated), or at least `listed === 0 && ! full && ! stopping`. Log the counts dropped. Fix the Walked.listed doc (HAU-10 item 9), the held.ts docblock and HAULER.md:179-181.
+
+**Tests to add.** haul.test.ts/run.test.ts: an entry held and then not listed for two complete walks is discarded and its partial is gone. A walk that ends `full` with nothing settled keeps held entries.
+
+**Verifier notes.** Merged from correctness-security F10 (confirmed, low) and the narrow parts of efficiency-quality F7 (uncertain/defer). The re-fetch part of F7 is split out as HAU-16.
+
+## HAU-16: A persistent mismatch (served bytes disagree with the venue's own description) is re-downloaded on every walk
+
+- **Severity:** low
+- **Category:** efficiency
+- **Decision:** DEFER
+- **Locations:**
+  - `services/hauler/src/fetch.ts:70-84`
+  - `services/hauler/src/held.ts:24-49`
+  - `services/hauler/src/types.ts (Withheld)`
+
+**Problem.** When a held file is listed again at unchanged size/ETag (prospector confirmed that the venue's HEAD disagrees with what was served), settles() is false, so the held copy is discarded and the file is fetched again. A file that is persistently wrong is pulled on every walk (QUIET_MS = 30 min when the walk had no progress).
+
+**Evidence.** fetch.ts:73-81. prospector reconciles synchronously within the report, so by the next walk the catalog has either corrected the values (the held copy commits, no fetch) or left them unchanged (re-fetch).
+
+**Fix.**
+
+If wanted: store the catalog's claimed size/etag in Withheld, and skip the re-fetch for N walks while the listing is unchanged (backoff), rather than never fetching again. Never pin the file as mismatched permanently: re-fetching is the only way to recover once the venue/CDN serves the right bytes.
+
+**Tests to add.** A mismatch listed again with unchanged catalog values makes 0 requests during the backoff and 1 after it.
+
+**Owner question.** When a venue persistently serves bytes that disagree with its own listing, should hauler back off re-fetching it (how many walks?) or keep re-fetching every walk as today? The reviewer's 'never re-fetch while unchanged' was judged harmful by the verifier.
+
+**Verifier notes.** Efficiency-quality F7 headline part. The verifier was uncertain whether this is a defect or intended behaviour. Deferred as a policy decision.
+
+## HAU-17: '403 on every attempt' is decided by the last attempt's status only
+
+- **Severity:** low
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:201-205`
+  - `services/hauler/src/fetch.ts:32-35`
+  - `services/hauler/README.md:34-35`
+  - `docs/services/HAULER.md:245, 253-257`
+
+**Problem.** The docs say a 403 makes a file failed only when it persists through every attempt. The code returns failed whenever the 3rd attempt is a main-address 403, whatever attempts 1-2 got (503, timeout, empty body, CDN failure). Non-main attempts also use up the counter. The result is a spurious 'failed': prospector re-probes and logs a misleading warning, and the file stays owed.
+
+**Evidence.** fetch.ts:201 `if (attempt === ATTEMPTS && res.status === HIDDEN)`. No state records earlier statuses. Traced by both lenses' verifiers.
+
+**Fix.**
+
+Add `let hiddenThroughout = true` in retrieve(). Set it to false on any main-address attempt that is not a 403: other statuses, an empty body (the :229 branch when host.main), and the catch path when host.main. Non-main attempts leave it unchanged. Line 201 becomes `attempt === ATTEMPTS && res.status === HIDDEN && hiddenThroughout`; otherwise fall through to 'unreached'. Reword the docs to 'a 403 from the listed address on every attempt made of it'.
+
+**Tests to add.** haul.test.ts with a single-address server (retry-after 0, fake timers or a stubbed delayFor): 503,503,403 -> unreached; 403,403,403 -> failed; timeout,403,403 -> unreached.
+
+**Verifier notes.** Merged from correctness-security F11 and efficiency-quality F11. Both confirmed at low.
+
+## HAU-18: A CDN's 404 is reported 'failed' while the listed bucket address is out of rotation and was never asked; hostToAsk's fallback can re-pick a tried, failing CDN
+
+- **Severity:** low
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:172-187 (GONE branch)`
+  - `services/hauler/src/fetch.ts:294-313 (hostToAsk)`
+  - `docs/services/HAULER.md:236-239`
+
+**Problem.** After a non-main 404/410, the GONE branch asks hostFor(..., tried). That drops addresses with outUntil > now, so if main was refused recently, one CDN-edge 404 returns failed without the bucket being asked. This contradicts the inline rationale (an edge that has lost a file is not a withdrawal), though not the literal 'every address in rotation' wording. Separately, `hostFor(..., tried) ?? hostFor(...)` can return a CDN already tried and failing, while the docblock says 'the listed one, once it is back'.
+
+**Evidence.** Reproduced: reviews/2026-11/units/scratch/hauler/edge404.test.ts (main refused 429, CDN 404, main would answer 200) gives outcome failed, main asked 0. Re-run by the verifier.
+
+**Fix.**
+
+1. Track `askedMain` per retrieve(). In the GONE branch, when host is not main and main exists but has not been asked for this file, return 'unreached' (it stays owed). A main 404/410 stays failed.
+2. hostToAsk fallback: `hostFor(venue, server, tried) ?? (main && backAt(main) <= Date.now() ? main : null)`, then wait for main only as HAU-02/HAU-05 allow.
+3. HAULER.md 'A file is gone only where every address in rotation says so': say the listed address must be among them. Fix the hostToAsk docblock (HAU-10 item 7) to match.
+
+**Tests to add.** haul.test.ts: the edge404 scenario gives 'unreached' with main asked 0. Main in rotation answering 404 gives 'failed'. A CDN 500 followed by main being out never re-asks the CDN.
+
+**Verifier notes.** Correctness-security F7. Reviewer rated it medium, verifier low: the cost is a spurious re-probe and one walk of delay, not data loss, and the claim that 'the probe could misread a 429' is speculative.
+
+## HAU-19: Mismatched reports omit the MD5 hauler computed, though the catalog accepts an ETag
+
+- **Severity:** low
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/types.ts:140-145, 154`
+  - `services/hauler/src/venue.ts:270`
+  - `services/hauler/src/fetch.ts:253-261`
+  - `docs/services/HAULER.md (Reporting)`
+
+**Problem.** retrieve computes the MD5 of a mismatched download but returns only size. Report.mismatched is `{ Key; Size? }`, while the catalog accepts `{ Key, Size, ETag }` (catalog/src/types.ts:224) and prospector compares ETags (prospector/src/reports.ts:153-160). A same-size, different-content download therefore does not trigger prospector's 'Reported file differs from the venue' error. The file stays owed either way, so the loss is diagnostic only.
+
+**Evidence.** venue.ts:270 pushes only Key and Size. The digest at fetch.ts:253 goes only to hold().
+
+**Fix.**
+
+Add `etag?: string` to Hauled and `ETag?: string` to Report.mismatched. fetch.ts:261 returns `{ outcome: 'mismatched', size: bytes, ...(digest ? { etag: digest } : {}) }` (digest is '' when not computed). venue.ts:270 adds `...(hauled.etag === undefined ? {} : { ETag: hauled.etag })`. Update HAULER.md Reporting to mention the MD5.
+
+**Tests to add.** haul.test.ts: the listed size with a different md5 returns `{ outcome: 'mismatched', size, etag: md5(body) }`. walk.test.ts: the posted report has `mismatched: [{ Key, Size, ETag }]`.
+
+**Verifier notes.** Efficiency-quality F8 (reviewer medium, verifier low). Correctness-security's notes (d) raised the same idea independently as an optional improvement.
+
+## HAU-20: Every download is written, then read back in full for its MD5, sometimes for a digest that is then ignored
+
+- **Severity:** low
+- **Category:** efficiency
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:253`
+  - `services/hauler/src/store.ts:52-62`
+  - `services/hauler/src/store.ts:134-140`
+
+**Problem.** retrieve calls md5(partialOf(path)) after writePartial, reading the file a second time. The condition `isDigest(file.etag) || file.size !== bytes` is also true when size is undefined, and in that case settles() ignores the digest.
+
+**Evidence.** fetch.ts:253 `const digest = isDigest(file.etag) || file.size !== bytes ? await md5(partialOf(path)) : '';`
+
+**Fix.**
+
+Hash while writing: writePartial returns `{ bytes, digest }` using a Transform that updates createHash('md5') in the pipeline. Delete the md5 call at :253 and keep md5() for agrees() on existing files. Combine with HAU-03's FileHandle/flush change and HAU-04's raw-bytes client in the same writePartial rewrite.
+
+**Tests to add.** store test: writePartial's digest equals the md5 of the written file, including for an empty body. The existing haul tests cover match and mismatch.
+
+**Verifier notes.** Efficiency-quality F9, confirmed at low.
+
+## HAU-21: Venues and their addresses are read from the catalog once at startup and never refreshed
+
+- **Severity:** low
+- **Category:** robustness
+- **Decision:** DEFER
+- **Locations:**
+  - `services/hauler/src/index.ts:36-44`
+  - `services/hauler/src/hosts.ts:32-43`
+  - `docs/services/HAULER.md:210`
+
+**Problem.** main() calls venues() once, sets hosts once, and fixes the venue list. A venue the catalog adds later is never walked (with HAULER_VENUES empty), and a changed CDN address is never seen until a restart. HAULER.md:210 does say the catalog is asked at startup, but does not say that a change needs a restart.
+
+**Evidence.** No other call sites of venues() or setHosts(). Confirmed by both lenses.
+
+**Fix.**
+
+Now (docs, bounded): add a sentence to HAULER.md 'Which address' and the README: venues and their addresses are read at start, and a change to them takes effect on restart. Later, if wanted: re-read /venues once per loop round through a shared, debounced refresh. Add `updateHosts` in hosts.ts, which keeps Host objects whose (server, base) is unchanged (with score, outUntil and strikes), recomputes main, and drops removed bases. Start loops for newly seen venues, tracked in a Set. `hauling` becomes a Set that stopAfterFlight waits on with allSettled.
+
+**Tests to add.** If implemented: a venue added to the fake /venues between rounds is walked. A removed base is no longer chosen. A kept base keeps its score.
+
+**Owner question.** Is restart-to-pick-up-new-venues acceptable (new venues need a prospector deploy anyway), or should hauler refresh /venues while running? If refresh: is the loop-lifecycle and shutdown complexity worth it?
+
+**Verifier notes.** Merged from correctness-security F9 and efficiency-quality F12. Both deferred at low. The interim doc sentence can be done now as part of HAU-10.
+
+## HAU-22: Wall-clock and overlap-dependent assertions make some tests timing-sensitive; config tests re-import service-kit cold
+
+- **Severity:** low
+- **Category:** testing
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/tests/haul.test.ts:199-213`
+  - `services/hauler/tests/walk.test.ts:51, 205-217`
+  - `services/hauler/tests/config.test.ts:8`
+
+**Problem.** 'leaves an address alone when it refuses' asserts < 500 ms against a real 1 s Retry-After. 'fetches large files six at a time' asserts most === 6, which needs six requests to overlap inside a 25 ms hold. The config suite needs a 30 s timeout because vi.resetModules makes it load service-kit cold.
+
+**Evidence.** haul.test.ts:207 `toBeLessThan(500)`, walk.test.ts:51 25 ms hold, walk.test.ts:213 `toBe(6)`.
+
+**Fix.**
+
+big/ handler: hold every response until 7 are in flight or 300 ms has passed since the last arrival, then release all and assert most === 6 (the proposed `most <= 6 && most === 6` is redundant). Refusal test: keep the ordering checks, and loosen the upper bound below 900 ms or drop it. config.test.ts: import once and call _test_loadConfig() after setting env, keep one import-time test, and drop the 30 s timeout.
+
+**Tests to add.** These are the test changes.
+
+**Verifier notes.** Efficiency-quality F20, confirmed at low. Flakes are possible but unlikely.
+
+## HAU-23: Dead code and test hooks: unused _test_ exports, an unreachable backoff cap, an orphaned docblock
+
+- **Severity:** low
+- **Category:** code-quality
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/fetch.ts:110 (MAX_MS)`
+  - `services/hauler/src/fetch.ts:351-352`
+  - `services/hauler/src/fetch.ts:365-366`
+  - `services/hauler/src/config.ts:48-50`
+  - `services/hauler/src/types.ts:126-137`
+
+**Problem.** knip/grep: _test_agrees, _test_delayFor, _test_loadConfig, _test_parseList and _test_parsePositiveInt are unused by any test. MAX_MS = 30_000 can never apply: the largest delayFor argument is 2, so the delay never exceeds 10 s. types.ts:126 `/** What happened to one file. */` sits stacked on Withheld's docblock, leaving `Outcome` without one.
+
+**Evidence.** knip output cited by the reviewer. The verifier traced every sleep(delayFor(attempt)) call to follow an `attempt === ATTEMPTS` return.
+
+**Fix.**
+
+Delete MAX_MS and the Math.min in delayFor. Move the stray docblock above `export type Outcome`. For each _test_ hook, either use it in the HAU-13/HAU-22 tests (_test_parse*, _test_loadConfig) or delete it (_test_agrees, _test_delayFor if unused). Decide per hook, not both ways.
+
+**Tests to add.** None beyond HAU-13/HAU-22.
+
+**Verifier notes.** Efficiency-quality F16. Also correctness-security F14 item 6 (the orphaned docblock).
+
+## HAU-24: The multipart-ETag explanation is repeated in two docblocks; Retry-After and jitter helpers duplicate prospector's
+
+- **Severity:** low
+- **Category:** code-quality
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `services/hauler/src/store.ts:142-161 (etagAgrees, isDigest)`
+  - `services/hauler/src/fetch.ts:322-335`
+  - `services/hauler/src/fetch.ts:351-352`
+
+**Problem.** etagAgrees and isDigest both explain the multipart suffix (against 'one home'). retryAfter/delayFor are near copies of prospector's retryAfterMs/delayFor. The reviewer's drift scenario does not happen: hauler reads the catalog's quoted ETag, which prospector has already normalised with etagOf, so hauler's quote-strip and lowercase is the right match for its provider.
+
+**Evidence.** services/catalog/src/listings/s3.ts:121 wraps the stored etag in quotes. Prospector normalises with etagOf before storing (reports.ts:52, probe.ts:667).
+
+**Fix.**
+
+Trim the etagAgrees docblock to the case/quote rule and keep the multipart explanation only on isDigest. Do NOT import prospector's etagOf into hauler (that would tie a consumer to venue quirks it never sees). Optional: move retryAfterMs and fullJitter into shared/utils and port hauler's Retry-After test there.
+
+**Tests to add.** Optional: isDigest('"ABC…-3"') is false, and etagAgrees with an uppercase quoted ETag is true (overlaps HAU-13).
+
+**Owner question.** (Non-blocking.) Move the Retry-After/jitter helpers into shared/utils, or leave the two 10-line copies?
+
+**Verifier notes.** Efficiency-quality F15. Confirmed, but the verifier rejected the 'share etagOf' part of the fix.
+
+## Deferred: decisions needed
+
+- **HAU-14** (No resume: any mid-body error, or a stop, discards the partial of a large file and restarts from byte 0): Is resuming large downloads worth the added complexity (resume state that must stay valid across addresses and restarts, sweepPartials keeping partials, a redesigned store invariant)? If so, within one process only, or across restarts too? How flaky is the haul machine's link in practice?
+- **HAU-16** (A persistent mismatch (served bytes disagree with the venue's own description) is re-downloaded on every walk): When a venue persistently serves bytes that disagree with its own listing, should hauler back off re-fetching it (how many walks?) or keep re-fetching every walk as today? The reviewer's 'never re-fetch while unchanged' was judged harmful by the verifier.
+- **HAU-21** (Venues and their addresses are read from the catalog once at startup and never refreshed): Is restart-to-pick-up-new-venues acceptable (new venues need a prospector deploy anyway), or should hauler refresh /venues while running? If refresh: is the loop-lifecycle and shutdown complexity worth it?
+
+Non-blocking questions on items being implemented (each has a default):
+
+- **HAU-05**: (Non-blocking: implement with the default.) What ceiling should a venue's Retry-After get: 30 min (LONGEST_OUT_MS, same as the default backoff) or 1 h? Honouring a long Retry-After is defensible. The cap only guards against absurd values.
+- **HAU-08**: (Non-blocking.) With the claimed property gone, is touch() still worth keeping? If nothing reads mtime, it could be dropped. That would also remove the EPERM trigger in HAU-01. Do you want a non-pending 'audit pass' that would make 'old date = unlisted' true (a planning item)?
+- **HAU-11**: (Non-blocking.) Should the layout rationale (separators, inode cost, '@' ordering) move into CATALOG-API.md, or simply be cut?
+- **HAU-24**: (Non-blocking.) Move the Retry-After/jitter helpers into shared/utils, or leave the two 10-line copies?
+
+## Rejected
+
+- **Archive downloads follow redirects to any host and scheme (correctness-security F12)**: The verifier said do not implement. Those who can issue a redirect (the venue or its CDN) can already serve arbitrary bytes. Hauler sends no credentials on archive requests, and the bases are https. A strict allow-list could break legitimate S3/CDN redirects. If hardening is ever wanted, only a refusal of https-to-http downgrades plus rejecting non-http(s) bases in setHosts is safe.
+- **Free-space checks stampede statfs (efficiency-quality F13)**: The race is real, but its impact is negligible: low() runs once per file before turn(), so only a handful of workers ever hit a stale window. Optional one-liner if the code is touched anyway: set looked.at before awaiting freeGb.
+- **File URLs built by string concatenation without an origin check (efficiency-quality F14)**: The catalog always builds bases as origin plus path prefix, so a Path cannot change the authority. The proposed encodeURI/prefix check would not fix the only real edge (keys containing #, ? or %) and risks regressions. If such keys ever appear, encode each path segment with encodeURIComponent.
+
+## Out of scope, noted for other units
+
+- `docs/modules/CATALOG-LENSES.md:8` (a provider doc) names its consumers ('hauler downloads through one, stocker builds through one…'), which breaks the dependency-direction rule. This belongs to the catalog review.

@@ -1,0 +1,712 @@
+{
+  "unit": "docs-consistency",
+  "assessment": "The deep service docs (STOCKER, HAULER, CATALOG, COLD-*) mostly match the code. The cross-doc frame around them is in poor shape: the entry docs, the planning layer, cross-references and the vocabulary.\n\n- **Contradictions on basic facts.** Five docs give different answers on who writes the `lens` table. The code is unambiguous: catalog.db is opened read-only and prospector writes all 16 tables. Docs also disagree on how a vault month is laid out on disk, and on whether consumers ask the catalog if a partition is settled.\n- **Entry docs disown themselves.** The root README sends readers to DATA_PIPELINE.md, which opens by declaring itself outdated.\n- **Planning has drifted furthest.** ROADMAP.md sits outside docs/planning and lists landed work as open: scoping, seed rebuilds, book series. It cites code and files that no longer exist. planning/COLD.md, CATALOG.md and BUGS.md hold landed or unverifiable entries.\n- **The dependency-direction rule is broken widely.** Venue docs explain prospector adapters, seeds and catalog refusals; BITGET-SEED.md is entirely a prospector artefact. CATALOG-LENSES.md explains lenses by their consumers.\n- **Terminology drift.** \"origin\", \"bucket\", \"slice\", \"vault\" and \"shape\" each carry two to four meanings. VOCABULARY.md defines none of the overlaps.\n- **REST facts have three deep homes.** They are written in depth in docs/REST.md, planning/REST.md and the venue docs.\n- **Several READMEs describe a repository that no longer exists:** infra, redis, rabbitmq, docker, dev/tooling and the UI stub.\n\nAll 32 findings came from one reviewer lens (docs-consistency:docs) with one verifier. The verifier confirmed 31 and was uncertain on one (F29, mental-model.html), which does not survive. It also refuted one sub-claim (VAULT.md's BitMEX framing is accurate) and narrowed several fixes; those refinements are used below. No second verifier ran, because the verifier lowered every high finding to medium. 30 items are for implementation now and 2 are deferred: REST consolidation, and moving CATALOG-API/CATALOG-LENSES.\n\n**Recommended restructuring (fresh start, one home per subject, providers before consumers):**\n- **docs/ARCHITECTURE.md** (one page, current state only) replaces DATA_PIPELINE.md.\n- **docs/planning/ROADMAP.md**, moved and pruned. Every plan goes under docs/planning/.\n- **docs/VOCABULARY.md** stays definitions-only and gains Shape, Table, the `@` market-bundle spelling, and possibly Series, Pattern and Ledger.\n- **docs/venues/** holds venue facts only, with KUCOIN.md as the template. Adapter, seed and catalog material moves to PROSPECTOR.md#venues and to the seeds README. A cross-venue docs/venues/REST.md replaces docs/REST.md and planning/REST.md (deferred).\n- **docs/services/** has one deep doc per running service. Service READMEs hold env vars and commands only, and each gets a \"Deployed by\" line. UI.md becomes docs/planning/UI.md.\n- **CATALOG-API.md and CATALOG-LENSES.md** move out of docs/modules (deferred until a home for shared-package docs is chosen).\n- **Infra, docker, redis, rabbitmq and tooling READMEs** are rewritten from the compose and Dockerfiles.\n\n**Longer-term recommendations:**\n- Split PROSPECTOR.md (3,018 lines) into model/API, survey and storage docs.\n- Ban code-line links in docs.\n- Run a link and anchor checker in CI.\n- Accept dated measurements as evidence, never dated status.\n\n**Order of work matters:**\n1. DXC-03 (move ROADMAP into planning) before DXC-02 (move DATA_PIPELINE's plans out).\n2. DXC-02 makes the DATA_PIPELINE edits in DXC-04, DXC-10 and DXC-29 moot. Apply those to ARCHITECTURE.md instead, or skip them if the text is gone.\n3. DXC-01, DXC-05 and DXC-22 all edit CATALOG-LENSES.md. Do them together.\n4. DXC-08, DXC-09, DXC-18 and DXC-20 all touch the venue docs. Do DXC-09 and DXC-18 inside the DXC-08 pass.\n5. DXC-20's ROADMAP links depend on DXC-03.",
+  "items": [
+    {
+      "id": "DXC-01",
+      "title": "Who writes the `lens` table is stated five contradictory ways (and the table count is wrong)",
+      "severity": "medium",
+      "category": "docs-contradiction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/modules/ARCHIVES.md:33-36",
+        "docs/modules/CATALOG-LENSES.md:13-16",
+        "docs/modules/CATALOG-LENSES.md:148-149",
+        "docs/services/PROSPECTOR.md:2137-2142",
+        "docs/services/PROSPECTOR.md:2152-2159",
+        "docs/services/CATALOG.md:11-17",
+        "services/prospector/README.md:42-44"
+      ],
+      "problem": "The docs give three different answers to who writes the `lens` table:\n- ARCHIVES.md says the catalog writes it and nothing else.\n- CATALOG-LENSES.md:15 says the catalog writes it (\"the one table it writes\"), but :148 of the same file says both lens tables are written by prospector.\n- PROSPECTOR.md:2137 says prospector writes every row of every table, but :2158 calls lens/lens_member \"the two tables the catalog writes\".\nCATALOG.md and the prospector README say prospector is the only writer. PROSPECTOR.md also says \"Seventeen tables\"; the schema has 16.",
+      "evidence": "services/catalog/src/database.ts:26 `new DatabaseSync(path, { readOnly: true })` (re-checked). services/prospector/src/database/schema.ts has 16 CREATE TABLE statements (re-checked). services/prospector/src/api/lenses.ts and src/lenses.ts write lens/lens_member.",
+      "fix": "Make PROSPECTOR.md#storage (:2134-2159) the one home for who writes what.\n- **ARCHIVES.md:33-35:** replace the \"Lenses belong to the catalog…\" paragraph with one sentence: a lens is a consumer's choice, made and served through the catalog, and is stored by prospector like every other row (see PROSPECTOR.md#storage).\n- **CATALOG-LENSES.md:13-16:** drop \"So the catalog writes the `lens` table (the one table it writes) and prospector never reads it\". Keep \"a lens is a consumer's choice of what to read, which collection neither knows nor acts on\".\n- **CATALOG-LENSES.md:148-149:** reduce to one line pointing to PROSPECTOR.md#storage.\n- **PROSPECTOR.md:2152:** \"Seventeen tables\" becomes \"Sixteen tables\".\n- **PROSPECTOR.md:2158-2159:** \"and the two tables the catalog writes\" becomes \"stored here for the catalog through the private lens API\".",
+      "tests": "`grep -rn \"catalog writes\" docs services/*/README.md` returns nothing. Count `CREATE TABLE` in schema.ts and confirm it matches the number PROSPECTOR.md states.",
+      "owner_question": "",
+      "source_finding": "F1",
+      "verifier_notes": "Confirmed, with severity lowered from high to medium. Following the wrong version fails loudly, because SQLite refuses writes on the read-only handle, so nothing is corrupted silently. Do this together with DXC-05 and DXC-22, which also edit CATALOG-LENSES.md."
+    },
+    {
+      "id": "DXC-02",
+      "title": "Root README's main entry doc (DATA_PIPELINE.md) is self-declared outdated and full of history and plans",
+      "severity": "medium",
+      "category": "docs-structure",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "README.md:25-26",
+        "README.md:51",
+        "docs/DATA_PIPELINE.md:3-11",
+        "docs/DATA_PIPELINE.md:63-65",
+        "docs/DATA_PIPELINE.md:82",
+        "docs/DATA_PIPELINE.md:100-114",
+        "docs/DATA_PIPELINE.md:116-125",
+        "docs/DATA_PIPELINE.md:127-142",
+        "docs/DATA_PIPELINE.md:144-159"
+      ],
+      "problem": "README.md sends every reader to DATA_PIPELINE.md first. That doc opens with \"Outdated — do not use as a reference… not being kept current on purpose\". It also breaks several CLAUDE.md rules:\n- **History:** the \"Retired\" section and \"both historically called vault\".\n- **Plans:** the \"Origins arrive one at a time\" and \"Replay… waits on the per-venue APIs\" sections, and \"WebSocket collection is currently parked\".\n- **A second home:** :100-114 restates STOCKER.md's schema rules.",
+      "evidence": "DATA_PIPELINE.md:3-11 (the banner). README.md:25: \"→ docs/DATA_PIPELINE.md for how collection and normalisation fit together\". README.md is the only file that links DATA_PIPELINE.md (re-checked).",
+      "fix": "Replace docs/DATA_PIPELINE.md with **docs/ARCHITECTURE.md**: about one page, present tense only.\n- One ASCII diagram: prospector → catalog (+ lenses) → hauler → archives → stocker → Parquet vault, with `tools cold` backing up the archives and the vault.\n- One paragraph per stage on the boundary it owns, linking to docs/services/<X>.md.\n- The modules that deploy them (link docs/modules/ARCHIVES.md and the warehouse module).\n- One line on the principle: collection is byte-faithful, and normalisation is a separate pass.\n- For source priority, link README.md:12-16, which already holds it. Do not restate it.\n- No venue names, no \"parked\" or \"unbuilt\" status, and no restatement of STOCKER's schema rules (link to them).\n\nMove or delete the rest:\n- **Replay, WS and REST collection status:** to docs/planning/ROADMAP.md (after DXC-03 moves it there) or to a new docs/planning/REPLAY.md.\n- **The BitMEX paragraph and the hoarder/vault-service note:** to docs/bitmex/README.md or to those services' docs.\n- **\"Retired\" and the \"Where raw lands\" history:** delete.\n\nThen point README.md:25-26 and :51 at ARCHITECTURE.md.",
+      "tests": "`grep -rn DATA_PIPELINE docs services modules README.md` returns nothing. Every relative link in ARCHITECTURE.md resolves. `grep -nE 'used to|historically|parked|not yet|will ' docs/ARCHITECTURE.md` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F14",
+      "verifier_notes": "Confirmed. Two corrections to the reviewer's fix:\n- docs/planning/ROADMAP.md did not exist when the review ran; DXC-03 creates it, so do DXC-03 first.\n- README.md:12-16 already holds the source-priority principle, so ARCHITECTURE.md should point to it rather than restate it.\nThe vault-layout fix in DXC-04, the \"origin\" rename in DXC-10 and the WebSocket pointer in DXC-29 all edit DATA_PIPELINE.md. Fold them into ARCHITECTURE.md where the text survives."
+    },
+    {
+      "id": "DXC-03",
+      "title": "ROADMAP.md is a plan outside docs/planning, full of landed, obsolete or contradicted items",
+      "severity": "medium",
+      "category": "docs-staleness",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/ROADMAP.md:12-16",
+        "docs/ROADMAP.md:90-92",
+        "docs/ROADMAP.md:135-136",
+        "docs/ROADMAP.md:185",
+        "docs/ROADMAP.md:210-212",
+        "docs/ROADMAP.md:222-241",
+        "docs/ROADMAP.md:262-281"
+      ],
+      "problem": "CLAUDE.md puts plans in docs/planning/, but ROADMAP.md sits at docs/. It calls itself \"read this first\", yet lists landed work as open and cites things that do not exist:\n- **Landed but listed as open:**\n  - Scoping. The work is done (PROSPECTOR.md:807, \"Partitions split themselves\"), and the SCOPING.md it links does not exist.\n  - The okx and bitget seed rebuilds (both done per planning/CATALOG.md:88).\n  - Order-book series mappings (stocker has `dataset: 'books'` entries).\n  - \"Data we do not want\" (handled by lens `prefer`, by stocker's rendering choice, and by cold evict).\n- **Wrong:**\n  - Cold tars are called `.pNN.tar`; the real name is `<venue>-<YYYYMM>.<NNN>.tar`.\n  - It cites `scattered`, `subject` and an okx BUGS.md entry, none of which exist.\n- **Time-relative text:** \"another week or two\" and \"Iteration 1\".\n- **Duplication:** the first-haul section repeats planning/CATALOG.md.",
+      "evidence": "- `ls docs/planning` lists BUGS, CATALOG, COLD, REST, STOCKER, archived and mental-model.html, with no SCOPING.md or ROADMAP.md (re-checked).\n- stocker/src/schema/series.ts:360, 476, 636, 703, 727, 828, 851 and 902 are `dataset: 'books'` entries.\n- cold/config.ts:97-98 builds tarName as `${venue}-${month}.${String(seq).padStart(3,'0')}.tar`.\n- shared/lenses/src/types.ts:188-194 defines `prefer`.\n- No *.md file links ROADMAP.md (re-checked; only README.md mentions it by name).",
+      "fix": "1. `git mv docs/ROADMAP.md docs/planning/ROADMAP.md`. No inbound links exist, so only its own relative links change: `planning/X` becomes `X`, and `services/…`, `modules/…` and `tooling/…` become `../services/…` and so on. If README.md names ROADMAP in its doc table, update that entry.\n2. Delete:\n   - the first-haul section (:12-16), which stays in planning/CATALOG.md only;\n   - \"another week or two…\" (:90-92);\n   - \"Archives are done, apart from the order-book datasets…\" (:135-136);\n   - the \"Iteration 1\" sentence (:210-212);\n   - the seed-rebuild paragraph (:222-228);\n   - the \"data we do not want\" paragraph (:230-235);\n   - the SCOPING paragraph (:237-241);\n   - the okx `scattered` bullet and the `subject` bullet (:270-275).\n3. Replace the `.pNN.tar` sentence (:185) with \"One month per venue, as one or more numbered tars (`<venue>-<YYYYMM>.<NNN>.tar`); see ../tooling/COLD.md\".\n4. Keep \"What this is building toward\" and \"The simulator and the replay engine are different beasts\".",
+      "tests": "A link check over docs/planning/ROADMAP.md: every `](…)` target exists and every anchor matches a heading. `grep -nE 'SCOPING|scattered|subject|\\.pNN|week or two|Iteration 1' docs/planning/ROADMAP.md` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F2",
+      "verifier_notes": "Confirmed, medium. The reviewer's \"update the links in README.md and the other docs\" overstated the work: there are no inbound .md links to update. Whether \"data we do not want\" is solved is a judgement call, but the evidence supports it well. Do this before DXC-02 and DXC-20."
+    },
+    {
+      "id": "DXC-04",
+      "title": "How a vault month is laid out on disk contradicts itself across docs",
+      "severity": "medium",
+      "category": "docs-contradiction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/DATA_PIPELINE.md:107",
+        "docs/services/STOCKER.md:370-371",
+        "docs/services/STOCKER.md:63-66",
+        "services/stocker/README.md:43-46",
+        "docs/tooling/COLD-VAULT.md:15-16"
+      ],
+      "problem": "Two docs say each instrument gets its own file: DATA_PIPELINE.md:107 (\"one file per instrument\") and STOCKER.md:370 (\"The vault holds one file per instrument\"). The real layout is different. A month whose archives weigh up to 1 GB is one file under `@`, and only a larger month gets a file per instrument. STOCKER.md:63-66, the stocker README and COLD-VAULT.md all describe the real layout.",
+      "evidence": "services/stocker/src/vault.ts:13-14 documents both `@/<YYYYMM>.parquet` and `<symbol>/<YYYYMM>.parquet`. STOCKER.md:63-64: \"A small one is a single file holding every instrument, under `@`…\".",
+      "fix": "- **STOCKER.md:370:** replace \"The vault holds one file per instrument. A file usually holds one instrument — the catalog's symbol.\" with \"An archive file usually holds one instrument — the catalog's symbol.\"\n- **DATA_PIPELINE.md:107:** if the file still exists, replace \"a month of a dataset, one file per instrument\" with \"a month of a dataset — one file under `@`, or a file per instrument for a large month (see services/STOCKER.md#path-convention)\". If DXC-02 has replaced the file, make sure ARCHITECTURE.md does not repeat the error.",
+      "tests": "`grep -rn \"one file per instrument\" docs services/*/README.md` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F3",
+      "verifier_notes": "Confirmed. The verifier lowered severity from high to medium, because the authoritative path-convention section is correct and easy to find."
+    },
+    {
+      "id": "DXC-05",
+      "title": "CATALOG-LENSES says consumers never ask the catalog whether a month is settled; they do",
+      "severity": "medium",
+      "category": "docs-contradiction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/modules/CATALOG-LENSES.md:8-9",
+        "docs/modules/CATALOG-LENSES.md:196-210"
+      ],
+      "problem": "CATALOG-LENSES.md:203-206 says readiness is decided against a complete lens and that \"Whether a month is 'closed' is never asked of the catalog\". The code does the opposite. Stocker asks the partitions endpoint for `downloaded=true&settled=true` and passes no lens, and cold push does the same.\n\nThe section also breaks the dependency-direction rule. A provider concept is explained by naming its consumers (hauler, stocker, cold storage), at :8-9 and in \"Who reads through one\".",
+      "evidence": "services/stocker/src/catalog.ts:22-25 `new URLSearchParams({ 'downloaded': 'true', 'settled': 'true', ... })`. CATALOG-API.md:111-118 defines `settled`. COLD-PUSH.md:17-21 describes the same query.",
+      "fix": "- Delete the \"Readiness is decided against a complete lens…\" paragraph (:203-206).\n- Rewrite :8-9 as \"It is how a reader of the catalog says what it wants without the catalog changing, and how a person browses.\" Keep the CATALOG-API and CATALOG-UI pointers.\n- Rename \"## Who reads through one\" to something neutral, such as \"## Lenses and splitting work between readers\".\n- Keep \"Several downloaders split the work by lens\" and \"A lens never scopes collection\", worded as properties of lenses. A pointer to prospector/`PROSPECTOR_VENUES` may stay.\n- Check that HAULER.md, STOCKER.md and COLD-PUSH.md each say how they use a lens, if they use one at all. Stocker passes no lens today.",
+      "tests": "`grep -nE 'hauler|stocker|cold storage' docs/modules/CATALOG-LENSES.md` returns only pointer lines. `grep -n 'never asked of the catalog' docs` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F4",
+      "verifier_notes": "Confirmed. The paragraph is wrong twice: about settled partitions, and about stocker working through a lens. Do this together with DXC-01 and DXC-22."
+    },
+    {
+      "id": "DXC-06",
+      "title": "planning/COLD.md lists landed work as not built, with a broken reference",
+      "severity": "medium",
+      "category": "docs-staleness",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/planning/COLD.md:8-11",
+        "docs/planning/COLD.md:13-19",
+        "docs/planning/COLD.md:31-32",
+        "docs/planning/COLD.md:34-35",
+        "docs/planning/COLD.md:37-39"
+      ],
+      "problem": "planning/COLD.md lists three pieces of landed work as not built:\n- `cold audit`;\n- `cold pull archives`;\n- `cold evict archives` with a vault that is partly away.\n\nIt also cites `legacy/docs/COLD-EVICT.md`, which does not exist, and claims COLD-AUDIT.md describes audit \"as designed\", which contradicts COLD-AUDIT.md.",
+      "evidence": "- dev/tooling/src/tools/cold/audit/checks/ holds disk, mega, record, staging and tars.\n- pull/archives/ holds bring, index and survey. pull/command.ts:58/78 offers both archives and vault.\n- evict/archives/survey.ts:57-71 falls back to files on disk in the vault.\n- legacy/ holds README.md, audit.ts, config.ts, evict/ and types.ts, with no docs/ folder.",
+      "fix": "In docs/planning/COLD.md:\n- **:8-11:** replace with \"`cold push`, `cold evict`, `cold pull` and `cold audit` work on the archives and the vault: how is COLD.md, COLD-PUSH.md, COLD-EVICT.md, COLD-PULL.md, COLD-AUDIT.md and COLD-VAULT.md.\"\n- **:13-19:** delete the paragraph. If something must stay, keep one sentence pointing at dev/tooling/src/tools/cold/legacy/README.md, with no legacy/docs path and no COLD-AUDIT clause.\n- **Delete** the items at :31-32 (\"vault that is partly away\"), :34-35 (`cold audit`) and :37-39 (`cold pull archives`).\n- **Keep** \"A first real push\", \"A first real run of the vault commands\" and \"A partition the catalog withdraws entirely\". Optionally note that pull archives and audit have not run against real Mega either; confirm this with the owner.",
+      "tests": "`grep -nE 'legacy/docs|as designed|cold audit.*not built|pull archives' docs/planning/COLD.md` returns nothing.",
+      "owner_question": "Have `cold push`, the vault commands, `pull archives` and `audit` run against real Mega yet? The answer decides which \"first real run\" items stay. This is a sub-question; the decision on the item is still IMPLEMENT.",
+      "source_finding": "F10",
+      "verifier_notes": "Confirmed. All four stale items verified against the code."
+    },
+    {
+      "id": "DXC-07",
+      "title": "planning/CATALOG.md and planning/BUGS.md hold landed or unverifiable entries",
+      "severity": "medium",
+      "category": "docs-staleness",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/planning/CATALOG.md:11-12",
+        "docs/planning/CATALOG.md:50-58",
+        "docs/planning/BUGS.md:12-31"
+      ],
+      "problem": "planning/CATALOG.md has three stale passages:\n- :11-12 says \"Moving stocker onto the catalog is STOCKER.md\". Stocker already runs on the catalog, and planning/STOCKER.md is now about instruments.\n- Hauler item 4 (cold scripts and stocker on hauler's layout) has landed.\n- Item 1 is a dated progress log that duplicates ROADMAP.md.\n\nBUGS.md's first entry cannot be re-checked by its own rule:\n- Its check uses a facts store (`@shared/facts/vault.sqlite`) that no longer exists.\n- It describes a legacy dashboard cell.\n- It defers the fix to a move that has already happened.",
+      "evidence": "`ls shared` gives lenses, types and utils. legacy/README.md:3-4 says the facts store no longer exists. planning/STOCKER.md:8 opens \"Stocker runs on the catalog\". services/stocker/src/catalog.ts exists.",
+      "fix": "- **docs/planning/BUGS.md:** delete :12-31 (the entry and its trailing `---`).\n- **docs/planning/CATALOG.md:** delete \"Moving stocker onto the catalog is [STOCKER.md](STOCKER.md).\" (:11-12) and Hauler item 4 (:58).\n- **Hauler item 1 (:50-53):** reduce it to the action (\"Finish the first haul through `backfill-20` into /data/tradebot/archives; a clean catalog should produce no `.bak`\") and drop the 2026-10-02/10-07 measurements. Delete it if the haul is done.\n- **The first-haul pointer in ROADMAP.md:** remove it (DXC-03 does this).\n- **Hauler items 2-3 and the :38-44 database note:** leave them unless the owner confirms they are done.",
+      "tests": "`grep -n 'facts' docs/planning/BUGS.md` and `grep -n 'Moving stocker' docs/planning/CATALOG.md` both return nothing.",
+      "owner_question": "Is the first haul through backfill-20 finished, and are Hauler items 2-3 still pending? This is a sub-question; the decision on the item is still IMPLEMENT for the clearly stale lines.",
+      "source_finding": "F11",
+      "verifier_notes": "Confirmed. The verifier cautions that only the clearly stale lines should be cut without asking the owner."
+    },
+    {
+      "id": "DXC-08",
+      "title": "Venue docs explain this repo's services, which breaks the venues-are-providers rule",
+      "severity": "medium",
+      "category": "docs-dependency-direction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/venues/BITGET-SEED.md:1-259",
+        "docs/venues/BITGET.md:33",
+        "docs/venues/BITGET.md:53-61",
+        "docs/venues/BITGET.md:564-715",
+        "docs/venues/BYBIT.md:85",
+        "docs/venues/BYBIT.md:121",
+        "docs/venues/BYBIT.md:155-161",
+        "docs/venues/BYBIT.md:233-246",
+        "docs/venues/GATE.md:215-266",
+        "docs/venues/GATE.md:353",
+        "docs/venues/HTX.md:204",
+        "docs/venues/HTX.md:243-244",
+        "docs/venues/HTX.md:447-453",
+        "docs/venues/OKX.md:505",
+        "docs/venues/OKX.md:641-647",
+        "docs/venues/BINANCE.md:34",
+        "docs/venues/BINANCE.md:85",
+        "docs/venues/BINANCE.md:120"
+      ],
+      "problem": "CLAUDE.md says docs/venues/** never names a service of this repo. The venue docs do it constantly:\n- **BITGET-SEED.md** is entirely about prospector's seed CSVs.\n- **BITGET.md** has \"Building the seed\" and \"What this catalog refuses\".\n- **BYBIT.md** mentions adapter `accepts` and prospector's limiter.\n- **GATE.md** has \"What the catalog places\" and names a source file.\n- **HTX.md** says a quirk belongs in stocker's `spill` handling.\n- **OKX.md** cites prospector source lines.\n- **BINANCE.md** cites `tagOf`.\nKUCOIN.md is clean and serves as the template.",
+      "evidence": "`grep -nciE 'prospector|hauler|stocker|catalog|adapter|seed|lens|vault' docs/venues/*.md` gives BITGET-SEED 33, BITGET 37, GATE 11, BINANCE 10, BYBIT 10, OKX 9, HTX 6 and KUCOIN 0. Some of these hits are a venue's own use of \"catalog\" or \"listing\", but the specific examples above were each verified.",
+      "fix": "1. Move docs/venues/BITGET-SEED.md next to the seed it describes (see DXC-09). Nothing links it, so no links break.\n2. In BITGET.md, move \"### Building the seed\" (:564-~682) and \"### What this catalog refuses\" (:683-715) out:\n   - the seed procedure goes to the seed README;\n   - the refusals go to PROSPECTOR.md, under a new \"Venues\" section with one short subsection per venue, each pointing back to the venue doc.\n   Keep the pure venue facts in BITGET.md: what the index offers, 403 meaning absence, and which listings are not crypto.\n3. In BYBIT, GATE, HTX, OKX and BINANCE, rewrite every sentence that names any of these: an adapter hook (`accepts`, `tagOf`, `probingLag`), a seed, \"the catalog\", prospector, stocker, `spill`, or a source file. Keep only the venue fact it rests on. Move how a service handles the fact into that service's doc: PROSPECTOR.md#venues for adapter handling, STOCKER.md for spill handling.\n4. Do this one venue at a time. Fold in DXC-18 (OKX ETag paragraph) and DXC-20's OKX link fixes.",
+      "tests": "Done when `grep -nE 'prospector|hauler|stocker|adapter|seed\\.ts|accepts|tagOf|spill|services/' docs/venues/*.md` returns nothing, apart from deliberate pointer lines the doc does not depend on. Every moved section is reachable from PROSPECTOR.md or STOCKER.md.",
+      "owner_question": "",
+      "source_finding": "F5",
+      "verifier_notes": "Confirmed, medium. The work is large (L) but mechanical and safe, and it fits the user's request for a fresh start. It can be split per venue."
+    },
+    {
+      "id": "DXC-09",
+      "title": "Prospector seeds README is outdated, and the bitget seed's doc lives in docs/venues",
+      "severity": "medium",
+      "category": "docs-staleness",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "services/prospector/src/database/migrations/seeds/README.md:3-26",
+        "services/prospector/src/database/migrations/seeds/README.md:161-163",
+        "docs/venues/BITGET-SEED.md:79-85",
+        "docs/venues/BITGET.md:564-567"
+      ],
+      "problem": "The seeds README says seeds exist only for okx and bitget, and its Layout lists only those two. The directory also holds binance/, gate/ and htx/ pattern.csv seeds, which migrations 002, 005 and 006 use for retirement dates and shapes.\n\nThe bitget seed doc has two problems:\n- It sits in docs/venues.\n- It carries history and plans: \"That rule is gone… Both come back when…\" in BITGET-SEED.md, and \"This is in progress; the description will change as it does\" in BITGET.md:566.",
+      "evidence": "`ls services/prospector/src/database/migrations/seeds` gives README.md, binance, bitget, gate, htx, okx and seed.ts. 002-htx.ts:26, 005-gate and 006-binance call `seed(db, '<venue>')`.",
+      "fix": "- **seeds/README.md intro:** reword to \"What a walk cannot establish: every pattern and series of a venue with no listing (okx, bitget), and pattern facts a listable venue's archive cannot show, such as the date a shape was retired (htx, gate, binance).\"\n- **seeds/README.md Layout:** add `binance/`, `gate/` and `htx/`, each `pattern.csv` only.\n- **Move docs/venues/BITGET-SEED.md** to services/prospector/src/database/migrations/seeds/bitget/README.md, or into a section of the seeds README. Cut the history and plans at :79-85 and state only the current behaviour, checked against seed.ts (for example, whether `last` is empty and whether SEEDED_AT withholds bitget's entry). Point to docs/venues/BITGET.md for venue facts rather than restating them.\n- **docs/venues/BITGET.md:564-660:** keep the venue facts there. Move the seed-building procedure and the \"why the seed states shapes\" rationale to the seed README. Delete \"This is in progress; the description will change as it does.\"\n- **Links:** update them, using `grep -rn 'BITGET-SEED' docs services` to find them.",
+      "tests": "`ls docs/venues/BITGET-SEED.md` fails (the file has moved). The seeds README Layout matches `ls seeds`. `grep -rn 'BITGET-SEED\\|in progress' docs` returns nothing stale.",
+      "owner_question": "",
+      "source_finding": "F13",
+      "verifier_notes": "Confirmed. The verifier's caveat: BITGET.md's \"Building the seed\" section contains genuine venue facts, and those stay in BITGET.md. Do this inside the DXC-08 pass."
+    },
+    {
+      "id": "DXC-10",
+      "title": "Key terms (origin, bucket, slice, shape, vault, letter folder) carry several meanings; VOCABULARY.md defines none of the overlaps",
+      "severity": "medium",
+      "category": "docs-terminology",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/VOCABULARY.md:6-104",
+        "docs/ROADMAP.md:75-133",
+        "docs/DATA_PIPELINE.md:116-125",
+        "docs/tooling/COLD.md:29-31",
+        "docs/tooling/COLD.md:60-70",
+        "docs/modules/CATALOG-API.md:123",
+        "docs/modules/CATALOG-API.md:134",
+        "docs/modules/CATALOG-API.md:179",
+        "docs/modules/CATALOG-API.md:215-219",
+        "docs/services/HAULER.md:29",
+        "docs/services/HAULER.md:105-108",
+        "docs/services/CATALOG-UI.md:345",
+        "docs/services/STOCKER.md:682-726",
+        "docs/modules/ARCHIVES.md:19",
+        "services/catalog-ui/README.md:25",
+        "services/vault/README.md:14"
+      ],
+      "problem": "Six terms carry more than one meaning:\n- **origin:** ROADMAP and DATA_PIPELINE use it for what VOCABULARY calls a *source*. COLD.md uses it for a tree to back up.\n- **bucket:** three meanings: an S3 bucket, the venue-wide `@` file (which VOCABULARY calls the `market` bundle), and a time period in STOCKER.\n- **slice:** lenses are called \"named slices\", but VOCABULARY defines slice and lens as different things.\n- **shape:** used throughout CATALOG-API and never defined.\n- **vault:** names both the CSV vault service and the Parquet vault, and both mount `/data/vault`.\n- **letter folder:** CATALOG-API uses `F` and HAULER uses `FL`.\n\nThe catalog's `books` dataset is stocked as the vault's `orderBook` table, with no defined term for *table*.",
+      "evidence": "- COLD.md:62: \"An origin is a tree to back up\".\n- ROADMAP.md:98: \"Three origins\".\n- CATALOG-API.md:134 describes the `buckets` field.\n- HAULER.md:105: \"The bucket is a level shallower\".\n- stocker/src/schema/tables.ts:254 maps ROOTS to orderBook.\n- DATA_PIPELINE.md:82: \"both historically called vault\".",
+      "fix": "Changes to **docs/VOCABULARY.md** (definitions only, no venue facts, no service internals):\n- Define **Shape**: venue + market + dataset + variant + grain, without bundle. Alternatively, replace \"shape\" in CATALOG-API with an existing term.\n- Under **Bundle**, add: \"the `market` bundle is spelled `@` in keys and paths.\"\n- Define **Table** as the vault's canonical name a dataset is stocked into (for example, catalog `books` becomes vault `orderBook`). Leave the mapping itself to STOCKER.md.\n- Optionally add **Series**, **Pattern** and **Ledger**, if they are used across several docs.\n\nChanges to the other docs:\n- **\"origin\" in ROADMAP and DATA_PIPELINE:** becomes \"source\" wherever the text survives DXC-02/DXC-03.\n- **COLD.md:** keep `origin` as the CLI argument name, defined once at :60-62 as \"the tree a command acts on\". Use \"tree\" in prose elsewhere.\n- **HAULER.md:105:** \"The market bundle (`@`) is a level shallower\".\n- **CATALOG-API.md:179/:219:** \"bucket\" becomes \"market-bundle file\". Document the `buckets` JSON field (:134) as \"count of market-bundle (`@`) files\", without renaming the field.\n- **CATALOG-UI.md:345:** follow DXC-16. The UI labels are \"Market Bundles\", and the doc should say so.\n- **STOCKER.md:682-726:** \"bucket\" becomes \"period\". Update the anchor and the links that use it (e.g. :60, :150).\n- **HAULER.md:** `FL` becomes `F`, matching CATALOG-API.md:215.\n- **ARCHIVES.md:19 and the catalog-ui README:25:** \"named slices\" becomes \"named selections\".\n- **services/vault:** call it \"the vault service\" wherever it could be confused with the Parquet vault.",
+      "tests": "`grep -rn -i 'named slice\\|/FL/' docs services/*/README.md` returns nothing. Every `bucket`/`origin` hit left over from `grep -rn -i 'origin\\|bucket' docs` is either the S3 sense or the cold CLI argument. Anchors renamed in STOCKER.md still resolve.",
+      "owner_question": "",
+      "source_finding": "F9",
+      "verifier_notes": "Confirmed. Renaming the UI label or the `buckets` JSON field is a code/API change and is out of scope (see Rejected). The \"named slices\" hit is at ARCHIVES.md:19, not :171. VOCABULARY.md must stay definitions-only."
+    },
+    {
+      "id": "DXC-11",
+      "title": "Tooling docs: `cold` missing from the tooling README, env precedence wrong, root README calls the tools `tb`",
+      "severity": "medium",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "dev/tooling/README.md:1-31",
+        "dev/tooling/README.md:199-206",
+        "dev/tooling/README.md:248-287",
+        "dev/tooling/README.md:382-394",
+        "docs/tooling/COLD.md:148",
+        "docs/tooling/COLD-PUSH.md:194",
+        "README.md:55"
+      ],
+      "problem": "**dev/tooling/README.md:**\n- It has no `cold` section and only one passing example.\n- Its directory tree omits tools/cold and tests/tools/cold.\n- Its numbered env precedence list is wrong: dev/tooling/.env actually overrides `-e`, and the list omits the `-m` module env.\n- It has a \"Future Enhancements\" plan section.\n\n**COLD.md and COLD-PUSH.md** say configuration is \"read from dev/tooling/.env\". Cold also reads the root .env (DATA_DIR, DATA_*_DIR) and modules/collect/archives/.env (CATALOG_PORT, CATALOG_TOKEN).\n\n**README.md:55** describes docs/tooling as \"the `tb` command-line tools\". `tb` is the dx compose wrapper; these docs cover `./tools`.",
+      "evidence": "- dev/tooling/src/shared/utils/env.ts:39-52: `{ ...rootEnv, ...moduleEnv, ...additionalEnv, ...toolingEnv }`, then process.env.\n- index.ts registers cold.\n- cold/config.ts:148-149 parses modules/collect/archives/.env.",
+      "fix": "1. **dev/tooling/README.md:**\n   - Add a short `cold` section: what it is, its subcommands, and a pointer to docs/tooling/COLD.md.\n   - Replace the precedence list with the order in env.ts: root .env → modules/<m>/.env (with -m) → -e file → dev/tooling/.env → process.env, each later one overriding the earlier.\n   - Regenerate the directory tree from `find dev/tooling/src dev/tooling/tests`.\n   - Delete \"Future Enhancements\", or move it to docs/planning/ if the owner wants to keep it.\n2. **COLD.md:148 and COLD-PUSH.md:194:** replace \"Read from dev/tooling/.env\" with a sentence naming the layers. Cold reads the tooling's layered env (root .env, which holds DATA_DIR and DATA_*_DIR; dev/tooling/.env; -e/-m), plus modules/collect/archives/.env for the catalog's port and token. Keep the detail in COLD.md and have COLD-PUSH point to it.\n3. **README.md:55:** change the row to \"`docs/tooling/` | `./tools`, the repo's dev CLI (cold storage)\", and add a line saying `tb` is the dx compose wrapper.",
+      "tests": "The README's precedence list matches env.ts line by line. `grep -n 'tb' README.md` shows `tb` described only as the compose wrapper. The regenerated tree matches `find`.",
+      "owner_question": "dev/tooling/.env overrides an explicit `-e` file. Is that intended? The docs should describe the code as it is; if it is not intended, changing it is a separate code change.",
+      "source_finding": "F18",
+      "verifier_notes": "Confirmed, with nuance. The reviewer said the README \"never mentions cold\", but :218 has one example. README:21 is true for the root and -m files; the error is only in the numbered list. COLD-PUSH.md:207-208 already says part of this."
+    },
+    {
+      "id": "DXC-12",
+      "title": "Docs present an empty CATALOG_PORT as normal, but `tools cold` on the host then waits forever on localhost:9010",
+      "severity": "medium",
+      "category": "docs-usability",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "services/catalog/README.md:25",
+        "docs/modules/ARCHIVES.md:52",
+        "modules/collect/archives/.env.example:30-34",
+        "docs/tooling/COLD-PUSH.md:204-208"
+      ],
+      "problem": "The catalog README, ARCHIVES.md and the archives .env.example all present an empty CATALOG_PORT as fine, with docker picking a free port. Cold on the host then breaks:\n- It falls back to http://localhost:9010.\n- The catalog is published on a random port instead.\n- Cold waits for a catalog that is not there, because COLD.md's \"a service that is not answering is waited for\" applies.\n\nCOLD-PUSH.md:207 says the address defaults from the module's settings. That is silently false when the module leaves the port empty.",
+      "evidence": "cold/config.ts:85: `catalogUrl: getEnv('CATALOG_URL','') || `http://localhost:${archives['CATALOG_PORT'] || 9010}``. services/catalog/docker/compose.yml:46: `${CATALOG_PORT:-}:8080`.",
+      "fix": "1. **COLD-PUSH.md environment table:** give the `CATALOG_URL` default as \"`http://localhost:$CATALOG_PORT` from modules/collect/archives/.env, else `http://localhost:9010`\". Add: with CATALOG_PORT empty, docker publishes the catalog on a random port, so set CATALOG_PORT in the archives module or set CATALOG_URL; otherwise cold waits on a catalog that is not there.\n2. **ARCHIVES.md:52 and services/catalog/README.md:25:** add \"Set it wherever something on the host calls the catalog, e.g. `tools cold`.\" This names an example consumer under CLAUDE.md's pointer exception, not a reason for the setting.\n3. **modules/collect/archives/.env.example:31-33:** reword the same way.",
+      "tests": "Doc review only. Optionally, as a separate code change outside this docs unit, have cold log the URL it is waiting on.",
+      "owner_question": "",
+      "source_finding": "F19",
+      "verifier_notes": "Confirmed. The archives .env.example already partly mitigates this (\"Set it when something outside has to reach the catalog\"), but no doc connects it to `tools cold`."
+    },
+    {
+      "id": "DXC-13",
+      "title": "Infra pack, redis and rabbitmq READMEs contradict the compose files and each other",
+      "severity": "medium",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "modules/infra/README.md:20-36",
+        "modules/infra/README.md:42-48",
+        "modules/infra/README.md:62-88",
+        "modules/infra/local/compose.yml:11",
+        "modules/infra/market/compose.yml:8",
+        "services/redis/README.md:7-24",
+        "services/redis/README.md:60",
+        "services/redis/README.md:66-75",
+        "services/rabbitmq/README.md:3",
+        "services/rabbitmq/README.md:15-18",
+        "services/rabbitmq/README.md:36-41"
+      ],
+      "problem": "**modules/infra/README.md:**\n- It marks a local `queue`, but that service is commented out.\n- It gives the cache hostname as `redis` for every pack. The real hostname is `cache` on local and `redis` on market.\n- It describes `DB_*_URL` values in the root .env; there are none.\n- It names modules that do not exist (archivist, collector, packer, gui, …).\n- All of its anchors are broken.\n\n**services/redis/README.md:**\n- It tells the reader to \"build\" a stock image.\n- It uses `tb up infra`, and there is no such target.\n- It uses host `@redis`.\n\n**services/rabbitmq/README.md:**\n- It says version 3.13; the image is 3.12.\n- It documents RABBITMQ_*_PORT, which no production compose reads.\n- It quotes a hoarder compose snippet that does not exist.",
+      "evidence": "- local/compose.yml:16-26: `# queue:`, which is commented out. Its cache service is named `cache`.\n- market/compose.yml includes services/redis/docker/compose.yml, whose service is `redis`.\n- .env.example:47: `CACHE_URL=…@cache:6379`.\n- rabbitmq/docker/base.yml: `rabbitmq:3.12-management-alpine`.\n- hoarder/docker/compose.yml:19: `QUEUE_URL: ${QUEUE_URL}`.\n- RABBITMQ_AMQP_PORT is read only by shared/utils/src/testing/docker/rabbitmq.yml and the pipe/router test envs.",
+      "fix": "1. **Rewrite modules/infra/README.md from the five compose files.** Use one table of pack × {queue, queue-rt, cache}, giving the actual hostname for each:\n   - local: queue-rt, cache (no queue);\n   - store: queue, queue-rt;\n   - market: queue, queue-rt, redis;\n   - bootcamp: queue-rt;\n   - shuttle: queue.\n   List the root .env.example variables: QUEUE_USER, QUEUE_PASS, QUEUE_PORT, QUEUE_MGMT_PORT, QUEUE_URL, QUEUE_RT_PORT, QUEUE_RT_MGMT_PORT, QUEUE_RT_URL, CACHE_PASS, CACHE_PORT and CACHE_URL.\n2. **In the same file, drop:**\n   - the DB_* text;\n   - the names of modules that do not exist;\n   - the broken anchors (or change them to #infra-pack-local and so on).\n3. **Comments:** fix the header comments in local/compose.yml:11 and market/compose.yml:8 that say `redis`. Remove the module names in store/compose.yml:6 and shuttle/compose.yml:3. These are comment-only edits.\n4. **services/redis/README.md:** trim it to:\n   - the image (redis:7-alpine, no build);\n   - CACHE_PASS and CACHE_PORT;\n   - the URL form from .env.example;\n   - a pointer to the infra README for hostnames.\n   Delete `tb up infra` and \"Build the image\".\n5. **services/rabbitmq/README.md:** trim it to:\n   - the image 3.12-management-alpine;\n   - QUEUE_USER and QUEUE_PASS;\n   - the ports the packs publish (QUEUE_PORT/QUEUE_MGMT_PORT, or QUEUE_RT_*);\n   - the URL form `amqp://${QUEUE_USER}:${QUEUE_PASS}@queue:5672`.\n   Replace the fictitious hoarder snippet with the real `QUEUE_URL: ${QUEUE_URL}`. Mention RABBITMQ_AMQP_PORT/MGMT_PORT only as the test-harness ports, or drop them.",
+      "tests": "Each hostname in the infra table matches a `services:` key, or a hostname override, in the corresponding compose.yml. `grep -rn 'archivist\\|tb up infra\\|3.13\\|DB_.*_URL' modules/infra services/redis services/rabbitmq` returns nothing.",
+      "owner_question": "Should the market pack name its cache `cache`, extending services/redis the way local does, so that CACHE_URL works on every pack? If not, the infra README documents the difference between packs.",
+      "source_finding": "F16",
+      "verifier_notes": "Confirmed, with two corrections. RABBITMQ_*_PORT is read by the test harness. The cache hostname differs between the packs themselves, so the README's `redis` is right for market and wrong for local. The practical impact is small, because only deprecated services consume CACHE_URL."
+    },
+    {
+      "id": "DXC-14",
+      "title": "docker/README.md describes a Dockerfile and build that do not exist",
+      "severity": "medium",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docker/README.md:7",
+        "docker/README.md:32",
+        "docker/README.md:44-56"
+      ],
+      "problem": "The README documents `docker/node.Dockerfile`, built with `npm ci`/`npm run build` per service, and says the image copies only what is needed. The reality is different:\n- There are four files: dev/prod × node/python. Each compose chooses one with `${APP_ENV:-prod}`.\n- The build is pnpm with corepack, for the whole workspace.\n- The prod runtime stage copies the whole built /app.\n- The dev image and the python images are not mentioned at all.",
+      "evidence": "`ls docker` gives dev.node, dev.python, prod.node and prod.python Dockerfiles, plus node/ and python/ entrypoints. prod.node.Dockerfile runs `corepack enable`, `pnpm install` and `pnpm run build`, then `COPY --from=builder /app .`. services/*/docker/compose.yml uses `dockerfile: docker/${APP_ENV:-prod}.node.Dockerfile`.",
+      "fix": "Rewrite docker/README.md from the four Dockerfiles and the two entrypoints. Cover:\n- **Selection:** APP_ENV (default prod) chooses `docker/${APP_ENV}.node.Dockerfile`, and the python pair works the same way.\n- **Build args:** SERVICE_NAME (required; the folder under services/) and NODE_MEMORY_MB (default 2048, passed as --max-old-space-size).\n- **Prod image:** the builder stage runs `COPY . .`, corepack, `pnpm install` and `pnpm run build` for the whole workspace. The runtime stage copies the whole built /app, sets WORKDIR /app/services/$SERVICE_NAME, and runs dumb-init then `node dist/index.js`.\n- **Dev image:** what dev.node.Dockerfile and node/entrypoint.sh actually do. Read them first; WORKDIR /live and CI=true point to a bind-mounted tree.\n\nAlso:\n- Remove all npm text and the claim that the image holds only the service's dependencies.\n- Keep EXPOSE 3000. Describe the health endpoint as what the compose healthchecks expect, not as a Dockerfile feature.\n- Check the .dockerignore bullets against the actual file.",
+      "tests": "Every command and file the README names appears in docker/*.Dockerfile or docker/*/entrypoint.sh. `grep -n npm docker/README.md` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F17",
+      "verifier_notes": "Confirmed. EXPOSE 3000, dumb-init and NODE_MEMORY_MB=2048 are accurate. The rest is a pure doc rewrite."
+    },
+    {
+      "id": "DXC-15",
+      "title": "docs/services/UI.md and the UI stub README describe things that are not there",
+      "severity": "medium",
+      "category": "docs-staleness",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/services/UI.md:21",
+        "docs/services/UI.md:45-66",
+        "docs/services/UI.md:70",
+        "docs/services/UI.md:123-127",
+        "services/_stub/ui/README.md:9-21"
+      ],
+      "problem": "**UI.md** does not match the stub:\n- It has a dated \"Current State (as of April 2026)\" section that says the data layer does not exist yet. data/DataProvider, EnvProvider, WsClient, BitmexClient and DiggerClient all exist.\n- Its documented tree (src/hooks/, data/channels/, LiveClient, ReplayClient) does not match the source.\n- It is shaped around BitMEX channels, though BitMEX is closed and the README forbids venue-named platform docs.\n- It uses future tense.\n- DiggerClient targets the retired `digger`.\n\n**The stub README** has two problems:\n- It uses `tb up gui/bitmex`, and no such module exists.\n- It defaults to live bitmex.com URLs.",
+      "evidence": "`find services/_stub/ui/src -type f` shows data/{BitmexClient,WsClient,DiggerClient,DataProvider,EnvProvider,…} and no hooks/ directory; the hooks sit beside the widgets. modules/ holds only collect, infra and store.",
+      "fix": "1. Move UI.md's forward-looking design to **docs/planning/UI.md** and make it venue-neutral. That covers the time-machine modes, the \"widgets are pure consumers\" rule, the hook/channel contract and the replay switch. Drop \"matches the BitMEX WebSocket channel\" (:70) and the dated \"Current State\" section. Then delete docs/services/UI.md, since no running service backs it.\n2. Rewrite **services/_stub/ui/README.md** to say what is true today:\n   - it is an unbuilt React/Vite stub, wired against BitMEX REST/WS and the retired `digger`;\n   - no module deploys it;\n   - docs/planning/UI.md holds the intended design.\n   Remove the `tb up/down/logs gui/bitmex` block. Keep the env table only if it is labelled as the stub's hardcoded BitMEX defaults.\n3. Update the \"Technical reference\" link in the stub README.",
+      "tests": "`grep -rn 'services/UI.md\\|gui/bitmex' --include=*.md .` returns nothing, excluding node_modules and submodules.",
+      "owner_question": "Should services/_stub/ui stay where it is or move to services/.deprecated/? The doc fixes are the same either way.",
+      "source_finding": "F15",
+      "verifier_notes": "Confirmed, with the fix adjusted. Rather than deleting UI.md outright, keep its design intent as a plan under docs/planning/, because the owner may want it for the functionality they plan to build."
+    },
+    {
+      "id": "DXC-16",
+      "title": "CATALOG-UI.md restates lens semantics, with a nonexistent instrument picker and wrong bundle labels",
+      "severity": "medium",
+      "category": "docs-one-home",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/services/CATALOG-UI.md:287-305",
+        "docs/services/CATALOG-UI.md:345-352"
+      ],
+      "problem": "The Lenses section re-explains lens semantics that CATALOG-LENSES.md owns, which makes two homes for one subject. Two of its statements are also wrong:\n- It describes an instrument picker (\"Instruments are searched, not browsed… badges\"). None exists; a rule never names an instrument.\n- It gives the bundle choices as \"*Both*, *Per instrument* or *Buckets*\".",
+      "evidence": "- services/catalog-ui/web/views/Lenses.tsx:958-959: \"A rule never names an instrument\".\n- :1063-1066: BUNDLES = 'per Instrument' and 'Market Bundles'.\n- `choices()` at :1072-1076 renders Any, Only <form>, and, for includes only (:834), Prefer <form>.",
+      "fix": "1. Delete the \"Instruments are searched, not browsed\" paragraph.\n2. Replace the \"A rule picks a bundle\" paragraph with one line: each rule's Grain and Bundle selects offer Any, Only <form> and (for includes only) Prefer <form>, where the bundle forms are per Instrument and Market Bundles; what these mean is in CATALOG-LENSES.md.\n3. Cut the semantic restatements (\"Includes minus excludes\", the meaning half of \"A rule states only what it constrains\") and point to CATALOG-LENSES.md instead.\n4. Keep only what the editor does:\n   - the per-venue blocks and the `every` display;\n   - drafts and Confirm/Drop/Discard/Revert;\n   - New Lens;\n   - server refusals shown on the rule;\n   - the size bar and its 30 s refresh;\n   - localStorage drafts and Reload as saved.",
+      "tests": "Every UI label quoted in CATALOG-UI.md appears as a literal string in Lenses.tsx.",
+      "owner_question": "",
+      "source_finding": "F20",
+      "verifier_notes": "Confirmed. The reviewer's proposed labels (\"any / per Instrument / Market Bundles\") were themselves imprecise, because the select also offers Only and Prefer variants. The refined fix above lists them correctly."
+    },
+    {
+      "id": "DXC-17",
+      "title": "REST knowledge has three deep homes (docs/REST.md, docs/planning/REST.md, each venue doc)",
+      "severity": "medium",
+      "category": "docs-one-home",
+      "decision": "DEFER",
+      "locations": [
+        "docs/REST.md:1-203",
+        "docs/planning/REST.md:1-749",
+        "docs/venues/BYBIT.md:348-496",
+        "docs/venues/OKX.md:950-1118",
+        "docs/venues/GATE.md:462-607",
+        "README.md:59-61"
+      ],
+      "problem": "The same per-venue REST facts (endpoints, page sizes, limits) are written in depth three times. For example, bybit's 600 calls per 5 s appears in all three places.\n- **planning/REST.md** is not a plan. It is a finished, dated survey (\"Done twice over, on 2026-10-09 and 10\").\n- **docs/REST.md** names venues outside docs/venues, which README.md:59-61 calls a bug.",
+      "evidence": "planning/REST.md:12-16 describes this three-layer arrangement itself. `grep -n 600 docs/REST.md docs/planning/REST.md docs/venues/BYBIT.md` matches in all three files.",
+      "fix": "Do this as a dedicated pass, one venue at a time.\n1. For each venue, diff the planning/REST.md section and the docs/REST.md section against docs/venues/<VENUE>.md#REST. Move any fact found only in the first two into the venue doc, keeping its seen/documented/not-known marking.\n2. Create docs/venues/REST.md holding only the cross-venue comparison:\n   - the summary table and limits-side-by-side from docs/REST.md;\n   - planning/REST.md's limits table, \"The answer\" and \"Across the venues\".\n   Each row links to its venue doc, and the file names no services of this repo.\n3. Delete docs/REST.md.\n4. Reduce planning/REST.md to a short, undated plan of what a REST collector must cope with, or delete it.\n5. Update the links (DATA_PIPELINE/ARCHITECTURE, README.md; find them with `grep -rn 'REST.md' docs services`).",
+      "tests": "No REST fact appears in more than one venue-level place. A link check passes. `grep -rn 'REST.md'` resolves to existing files only.",
+      "owner_question": "Where should the cross-venue REST comparison live: docs/venues/REST.md, or docs/REST.md kept but made venue-agnostic? And should planning/REST.md survive as a short REST-collector plan, or be deleted? The merge also needs fact-by-fact care across about 950 lines, so it should be its own pass.",
+      "source_finding": "F12",
+      "verifier_notes": "Confirmed but deferred. This is an M-L merge in which survey findings can be lost, and it includes a structural choice about the doc's home."
+    },
+    {
+      "id": "DXC-18",
+      "title": "OKX.md says prospector compares ETags case-sensitively; the code and PROSPECTOR.md say case-blind",
+      "severity": "low",
+      "category": "docs-contradiction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/venues/OKX.md:640-647",
+        "docs/services/PROSPECTOR.md:2116-2121"
+      ],
+      "problem": "OKX.md:641-647 says two prospector comparisons are case-sensitive \"today\" and that ETags want normalising. Both claims are false: the code lower-cases every ETag. The paragraph also links a routes.ts that does not exist, and cites a queries.ts line that is now unrelated. On top of that, it breaks the venues-are-providers rule.",
+      "evidence": "services/prospector/src/etag.ts: `etagOf = raw => raw?.replace(...).toLowerCase()`. `ls services/prospector/src/api` gives collector.ts, index.ts, lenses.ts and reports.ts. queries.ts:1035 is `UPDATE run SET cursor`.",
+      "fix": "Replace OKX.md:640-647 with the venue fact alone: \"**The ETag case differs by origin** — OSS answers uppercase, S3 lowercase — for byte-identical objects (same length, same md5).\" PROSPECTOR.md needs no change.",
+      "tests": "`grep -n 'routes.ts\\|queries.ts\\|case-sensitive' docs/venues/OKX.md` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F6",
+      "verifier_notes": "Confirmed, lowered to low severity: the worst outcome is someone re-investigating a bug that is already fixed. Do it as part of the DXC-08 pass."
+    },
+    {
+      "id": "DXC-19",
+      "title": "The walk-schedule example (`bitget: 1,10,20`) would stop prospector at startup",
+      "severity": "low",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "services/prospector/README.md:115-117",
+        "docs/services/PROSPECTOR.md:1230-1233"
+      ],
+      "problem": "Both docs show `bitget: 1,10,20` as an example line of walk-schedule.yaml. Bitget cannot be listed, so the schedule is rejected and the service exits cleanly, and nothing restarts it. PROSPECTOR.md:1237 itself says only listable venues may be named. The shipped example file uses kucoin.",
+      "evidence": "adapters/bitget.ts:18 sets `listable: false`. schedule.ts:58-60 throws \"cannot be listed\". index.ts:99-103 logs and calls process.exit(0). walk-schedule.example.yaml uses `# kucoin: 1,10,20`.",
+      "fix": "Replace `bitget: 1,10,20` with `kucoin: 1,10,20` in services/prospector/README.md:116 and in docs/services/PROSPECTOR.md:1231. In the README, add: \"Only a venue that can be listed may be named — not okx or bitget.\"",
+      "tests": "`grep -rn 'bitget: 1,10,20' docs services` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F7",
+      "verifier_notes": "Confirmed, lowered to low severity: the failure is loud and immediate, and its message names the problem."
+    },
+    {
+      "id": "DXC-20",
+      "title": "Broken links and anchors across docs",
+      "severity": "low",
+      "category": "docs-links",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/services/PROSPECTOR.md:955",
+        "docs/services/PROSPECTOR.md:960",
+        "docs/services/PROSPECTOR.md:975",
+        "docs/venues/OKX.md:643",
+        "docs/venues/OKX.md:711",
+        "docs/ROADMAP.md:235",
+        "docs/ROADMAP.md:240",
+        "docs/planning/archived/PLAN.md:18",
+        "modules/infra/README.md:44-48",
+        ".github/copilot-instructions.md:7",
+        ".github/copilot-instructions.md:37"
+      ],
+      "problem": "Several links point at renamed headings or missing files:\n- **PROSPECTOR.md:** three anchors into GATE.md that no longer exist.\n- **OKX.md:** a renamed anchor, and a link to the missing routes.ts.\n- **ROADMAP.md:** a missing planning/CATALOG anchor and the missing SCOPING.md.\n- **archived/PLAN.md:** the missing EXECUTOR.md.\n- **modules/infra/README.md:** every anchor.\n- **.github/copilot-instructions.md:** a link to a missing docs/ai/README.md, and a description of a `src/mongodb.ts` service module.",
+      "evidence": "A link and anchor checker (scratchpad/reviews/scratch/links.py) reported exactly these. `grep -n '^#' docs/venues/GATE.md` shows the renamed headings at :47, :68 and :393. The OKX heading is at :762.",
+      "fix": "- **PROSPECTOR.md :955/:960/:975:** change the anchors to #keys-filed-at-the-wrong-depth, #the-trees-and-which-are-dead and #2021-07-spot-data-at-the-futures-url.\n- **OKX.md:711:** change to #ranges-and-why-the-monthly-sweep-is-how-to-get-them.\n- **OKX.md:643:** remove the routes.ts#L433 link. DXC-18 deletes the paragraph anyway.\n- **ROADMAP links:** these go away with DXC-03.\n- **archived/PLAN.md:18:** unlink EXECUTOR.md and leave the plain text \"(never written)\".\n- **modules/infra/README.md:** change the anchors to #infra-pack-local, #infra-pack-store, #infra-pack-market, #infra-pack-bootcamp and #infra-pack-shuttle, or follow DXC-13's rewrite.\n- **.github/copilot-instructions.md:** point :7 at ../CLAUDE.md and ../README.md, and delete the `src/mongodb.ts` bullet at :37.\n- **Rule from now on:** do not deep-link code lines (`file.ts#L123`) in docs.",
+      "tests": "Re-run scratchpad/reviews/scratch/links.py over all in-scope .md files. It should report zero broken links, apart from the external ../tradebot-sim links.\n\nOptionally, add a markdown link and anchor check to CI (lychee or markdown-link-check, with anchors on). Exclude node_modules, the submodules, .deprecated and the external ../tradebot-sim links.",
+      "owner_question": "",
+      "source_finding": "F23",
+      "verifier_notes": "Confirmed. archived/PLAN.md is history by design, so the link there matters least."
+    },
+    {
+      "id": "DXC-21",
+      "title": "History and plans inside current-state docs",
+      "severity": "low",
+      "category": "docs-tense",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/services/PROSPECTOR.md:639",
+        "docs/services/PROSPECTOR.md:1860-1862",
+        "docs/services/PROSPECTOR.md:2228-2231",
+        "docs/services/PROSPECTOR.md:2521",
+        "docs/services/PROSPECTOR.md:2645",
+        "docs/services/PROSPECTOR.md:2906",
+        "docs/services/HAULER.md:261-263",
+        "docs/modules/CATALOG-LENSES.md:81-83",
+        "docs/modules/CATALOG-LENSES.md:162-164",
+        "docs/tooling/COLD-CATALOG.md:147-152",
+        "docs/services/STOCKER.md:8-15",
+        "docs/services/STOCKER.md:626-627",
+        "services/stocker/README.md:7-10"
+      ],
+      "problem": "These passages break \"Only what is true today\":\n- **History:** \"used to…\" and \"no longer\" in PROSPECTOR.md, HAULER.md's \"Reporting them as failures had prospector asking…\", and CATALOG-LENSES' \"was rejected\" and \"what this replaced\".\n- **Plans:**\n  - COLD-CATALOG.md's \"Not built\" section;\n  - PROSPECTOR's migration-policy \"until a second developer… from then on frozen\";\n  - STOCKER's \"only archives is under development today… further sources may join\";\n  - STOCKER's \"a stopgap until instrument metadata says it\".",
+      "evidence": "`grep -nE 'used to|no longer|not yet|stopgap|Not built' docs` lists these lines. The verifier corrected two line numbers: the migration policy is at :2228-2231, and COLD-CATALOG's \"Not built\" is at :147.",
+      "fix": "- **PROSPECTOR.md \"used to\" passages:** restate each as the present rule plus its reason, without \"used to\", \"no longer\" or \"the old rules\":\n  - :639 becomes \"Descent does not stop at a wide prefix: …\";\n  - :2521 becomes \"`last` does not bound generation, because…\";\n  - do the same at :2645, :2906 and :1860-1862 (\"Probing is not paced separately: a probe and a listing are the same thing to a host…\").\n- **HAULER.md:261-263:** \"They are not failures: the file is fine, only the way to it is not, and reporting them would have prospector re-ask the venue about files it serves.\"\n- **CATALOG-LENSES.md:**\n  - :81-83 becomes \"A rule names only what it constrains, not `markets: 'all'`, because…\";\n  - :162-164 becomes \"Sizing is exact rather than sampled because trade volume is too uneven: six series of two thousand put bybit 2021–2025 perpetual trades at 4.4 TB where they are 1.9.\"\n- **COLD-CATALOG.md:147-152:** move the \"Not built\" section to docs/planning/COLD.md.\n- **PROSPECTOR.md:2230-2231:** keep \"a change edits the migration it belongs to\", and move the \"until a second developer… frozen\" clause to docs/planning/CATALOG.md.\n- **STOCKER.md:8-15 and the stocker README:7-10:** remove \"only archives is under development today\" and \"Further sources may join\". Keep \"REST and WS files are raw too… more formats to it\".\n- **STOCKER.md:627:** drop \"— a stopgap until instrument metadata says it\". planning/STOCKER.md already holds that plan.\n- **legacy README:16:** may stay; optionally rephrase it as \"A file is here only while what it knows has not been rebuilt.\"",
+      "tests": "`grep -rnE 'used to|no longer|stopgap|Not built|under development today' docs services/*/README.md` returns only deliberate uses, for example in docs/planning.",
+      "owner_question": "",
+      "source_finding": "F24",
+      "verifier_notes": "Confirmed. The migration-policy clause is the weakest case, but its \"from then on\" half is a plan. The legacy README's line is acceptable as a statement of the folder's rule."
+    },
+    {
+      "id": "DXC-22",
+      "title": "Provider docs explain themselves by their consumers (catalog-ui README, infra README, rabbitmq/pipe examples)",
+      "severity": "low",
+      "category": "docs-dependency-direction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/modules/CATALOG-LENSES.md:8-9",
+        "services/catalog-ui/README.md:25-26",
+        "modules/infra/README.md:62-88",
+        "services/pipe/README.md:95-98",
+        "services/rabbitmq/README.md:36-41",
+        "docs/modules/CATALOG-API.md:189-190"
+      ],
+      "problem": "Several provider docs justify what they offer by who uses it:\n- **CATALOG-LENSES.md:8-9** lists hauler, stocker and cold as the reasons lenses exist (fixed by DXC-05).\n- **The catalog-ui README** says \"such as the one hauler downloads\".\n- **The infra README** describes each pack by modules that do not exist.\n- **The rabbitmq README** quotes a fabricated hoarder snippet.\n- **The pipe README** makes a nonexistent `journalist` service read as real.",
+      "evidence": "modules/infra/README.md:62: \"Runs history modules (archivist, collector, archeologist, packer)\". `ls modules` gives collect, infra and store. hoarder/docker/compose.yml:19 has `QUEUE_URL: ${QUEUE_URL}`.",
+      "fix": "- **CATALOG-LENSES.md:8-9:** apply DXC-05's rewrite.\n- **The catalog-ui README:25-26:** \"lenses — named selections of the catalog (sets of whole partitions), each edited as rules per venue…\". Drop \"such as the one hauler downloads\".\n- **modules/infra/README.md:** describe each pack only by the brokers and cache it defines (DXC-13).\n- **services/rabbitmq/README.md:36-41:** quote the real `QUEUE_URL: ${QUEUE_URL}` (DXC-13).\n- **services/pipe/README.md:95-98:** use neutral names (`topic:broadcast > sink@topic:sink`, \"a consumer can then read queue `sink`\").\n- **Optional:** CATALOG-API.md:189 \"This is what a downloader walks\" becomes \"A client walks the listing and writes each object at its key\". This one is cosmetic.\n- **Do not change VAULT.md's BitMEX framing** (see Rejected).",
+      "tests": "`grep -rn 'archivist\\|journalist\\|hauler downloads' docs services/*/README.md modules` returns nothing.",
+      "owner_question": "",
+      "source_finding": "F8",
+      "verifier_notes": "Confirmed in part. The verifier refuted the VAULT.md sub-item: services/vault really is BitMEX-specific in code. It rated CATALOG-API:189 as weak. The infra and rabbitmq parts overlap with DXC-13, so do them there."
+    },
+    {
+      "id": "DXC-23",
+      "title": "Vault service README misses VAULT_COMPRESSION_LEVEL; no service README says what deploys it",
+      "severity": "low",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "services/vault/README.md:26",
+        "docs/services/VAULT.md",
+        "README.md:52",
+        ".env.example:28-31"
+      ],
+      "problem": "The vault service README says \"No environment variables\", but config.ts reads VAULT_COMPRESSION_LEVEL. VAULT.md does not mention it either.\n\nNo module includes vault, hoarder, router or pipe, yet they are documented as if they run. Readers cannot tell which services are deployed.",
+      "evidence": "services/vault/src/config.ts:6 calls parseCompressionLevel(VAULT_COMPRESSION_LEVEL), with default 6 and range 1-9. The compose `path:` includes cover only prospector, catalog, catalog-ui, hauler, stocker and redis.",
+      "fix": "- **services/vault/README.md Configuration:** list `VAULT_COMPRESSION_LEVEL`: gzip level, integer 1-9, default 6; startup fails outside that range. Keep the note that the data directory is fixed at /data/vault.\n- **docs/services/VAULT.md:** add the same variable where it describes flushing and compression.\n- **Each services/*/README.md:** add one \"Deployed by\" line, such as \"archives module\", \"warehouse module\", \"infra market pack\", or \"Not deployed by any module\" for vault, router, pipe, hoarder and the UI stub.",
+      "tests": "Every `process.env.X` read in services/vault/src appears in the README. `grep -L 'Deployed by' services/*/README.md` returns nothing.",
+      "owner_question": "Should vault, router, pipe and hoarder move to services/.deprecated/? The doc fixes stand either way.",
+      "source_finding": "F26",
+      "verifier_notes": "Confirmed. There is no runtime clash on /data/vault (the containers are separate), only a naming confusion, which DXC-10 covers."
+    },
+    {
+      "id": "DXC-24",
+      "title": "Hauler README says a refusal pauses the whole venue; only the refusing address is taken out",
+      "severity": "low",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "services/hauler/README.md:38",
+        "docs/services/HAULER.md:225-229"
+      ],
+      "problem": "The README says \"A refusal also pauses every fetch from that venue for a while.\" In fact only the refusing address goes out of rotation, which is what HAULER.md says.",
+      "evidence": "services/hauler/src/hosts.ts:91-113 sets `outUntil` on one Host. :52 filters out only hosts whose `outUntil > now`. There is no venue-wide pause.",
+      "fix": "Replace README.md:38 with: \"A refusal — a `429`, any answer saying how long to wait, or five `403`s running with nothing delivered between — takes that address out of rotation for a while (see HAULER.md); a server with only one address waits.\"",
+      "tests": "Doc review against hosts.ts.",
+      "owner_question": "",
+      "source_finding": "F27",
+      "verifier_notes": "Confirmed."
+    },
+    {
+      "id": "DXC-25",
+      "title": "Archives .env.example claims a CATALOG_DIR default that does not exist and omits bitget from venues",
+      "severity": "low",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "modules/collect/archives/.env.example:9-16",
+        "modules/collect/archives/.env.example:41-42"
+      ],
+      "problem": "The comment says CATALOG_DIR \"Defaults under the shared data root\". Both compose files require it with `:?`, and the root .env.example has no CATALOG_DIR. The PROSPECTOR_VENUES comment omits bitget.",
+      "evidence": "services/prospector/docker/compose.yml:61 and services/catalog/docker/compose.yml:39 use `${CATALOG_DIR:?…}`. prospector/src/venues.ts builds VENUE_NAMES from ADAPTERS, which include bitget.",
+      "fix": "- **Line 9:** replace with \"Required: compose refuses to start without it. Any absolute host path works, e.g. /storage/tradebot/catalog; the container path is fixed and private.\" Do not add a default to the root .env.example, which would change behaviour.\n- **Line 42:** replace with \"CSV of venue names (binance, bitget, bybit, gate, htx, kucoin, okx); unknown names fail at startup with the valid list.\"",
+      "tests": "Doc review. The venue list matches VENUE_NAMES.",
+      "owner_question": "",
+      "source_finding": "F30",
+      "verifier_notes": "Confirmed."
+    },
+    {
+      "id": "DXC-26",
+      "title": "CATALOG-API examples contradict its own variant rules",
+      "severity": "low",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/modules/CATALOG-API.md:36",
+        "docs/modules/CATALOG-API.md:144-147",
+        "docs/modules/CATALOG-API.md:209"
+      ],
+      "problem": "The books variant example uses `mode`/depth, but the defined order is `kind`, then `depth`. The gate key example has no variant, though gate's books carry `incremental,full`.",
+      "evidence": "services/catalog/src/vocabulary.ts:65 `books: ['kind', 'depth']`. prospector/src/adapters/gate.ts:161 `variant: 'incremental,full'`.",
+      "fix": "1. **:144-147:** change the variants to `{ \"kind\": \"incremental\", \"depth\": \"500\" }` and `{ \"kind\": \"incremental\", \"depth\": \"200\" }`.\n2. **:209:** use a key gate actually produces: `gate/spot/books,incremental,full/B/BTC_USDT/202107/gate|spot|books,incremental,full|BTC_USDT|20210726.part03.csv.gz`.\n3. **Other names:** grep the doc for any other `mode` level name.",
+      "tests": "Optional: align the catalog test fixtures (keys.test.ts:37, listings.test.ts:65-66, 308) to the variant-carrying form. That is a test change, outside the docs pass.",
+      "owner_question": "",
+      "source_finding": "F21",
+      "verifier_notes": "Confirmed. The variant-less key is also a test fixture, which is why it parses."
+    },
+    {
+      "id": "DXC-27",
+      "title": "CATALOG.md says nothing is shared in code with prospector, then names a shared package",
+      "severity": "low",
+      "category": "docs-contradiction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/services/CATALOG.md:46-49",
+        "docs/services/CATALOG.md:136-141"
+      ],
+      "problem": "Line 46 says \"Nothing is shared in code with prospector.\" Lines 136-141 say both services import `@tradebot/lenses`.",
+      "evidence": "`grep -rln @tradebot/lenses services/*/src` matches files in both catalog and prospector.",
+      "fix": "Replace the bold sentence at :46 with: \"**Nothing of the catalog's queries is shared in code with prospector.** What a lens is comes from `@tradebot/lenses`, which both import (see below). The queries are this service's own…\" Keep the rest of the paragraph.",
+      "tests": "Doc review.",
+      "owner_question": "",
+      "source_finding": "F22",
+      "verifier_notes": "Confirmed."
+    },
+    {
+      "id": "DXC-28",
+      "title": "Binance's 2025-01 ms→µs timestamp change is documented only in stocker's docs",
+      "severity": "low",
+      "category": "docs-dependency-direction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "docs/venues/BINANCE.md",
+        "docs/services/STOCKER.md:639-645",
+        "docs/services/STOCKER-PARTITIONS.md:34",
+        "docs/services/STOCKER-PARTITIONS.md:180"
+      ],
+      "problem": "Binance spot trades and klines switch from millisecond to microsecond timestamps in 2025-01. That is a venue fact, but only stocker's docs record it, and BINANCE.md does not mention it.",
+      "evidence": "`grep -niE 'µs|micro' docs/venues/BINANCE.md` returns nothing. STOCKER-PARTITIONS.md:180: \"ms through 2024-12, µs from 2025-01\". stocker/src/schema/tables.ts:76 calls it a venue fact.",
+      "fix": "- Add \"### Spot timestamps change unit in 2025-01\" under BINANCE.md \"## Archives\". State that spot trades and klines carry integer epoch milliseconds through the 2024-12 files and microseconds from 2025-01, with no change of filename or header. Name no service.\n- Include aggTrades only after checking a file.\n- In STOCKER.md and STOCKER-PARTITIONS.md, keep only the handling (unit inferred per value) and link to the new BINANCE.md anchor.",
+      "tests": "The new anchor resolves from the STOCKER docs.",
+      "owner_question": "",
+      "source_finding": "F31",
+      "verifier_notes": "Confirmed."
+    },
+    {
+      "id": "DXC-29",
+      "title": "Kraken has a WS adapter but no venue doc; the WebSocket pointer claims every venue doc has a WS section",
+      "severity": "low",
+      "category": "docs-coverage",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "services/hoarder/README.md:24-37",
+        "docs/DATA_PIPELINE.md:47",
+        "README.md:56"
+      ],
+      "problem": "Hoarder implements a kraken WS adapter and states Kraken venue facts in its own README, but there is no docs/venues/KRAKEN.md. DATA_PIPELINE.md:47 points to \"each venue doc's WebSocket section\", but only BINANCE, BYBIT and OKX have one.",
+      "evidence": "services/hoarder/src/venues/kraken.ts exists. `grep '^## ' docs/venues/*.md` shows WebSocket sections only at BINANCE.md:566, BYBIT.md:497 and OKX.md:1119.",
+      "fix": "- Create docs/venues/KRAKEN.md with only a \"## WebSocket\" section, written from the captured frames in services/hoarder/tests/venues-protocols.test.ts and the adapter. Cover:\n  - the v2 public endpoint;\n  - the subscribe/ack frame shape;\n  - rejection of unknown channels;\n  - the `BTC/USD` symbol syntax.\n  Describe the venue, never hoarder. Add a one-line scope note that only the WebSocket API has been examined, and make no claim about archives.\n- Change the pointer, in ARCHITECTURE.md if DXC-02 has landed and otherwise in DATA_PIPELINE.md:47, to \"the WebSocket section of each venue doc that has one (BINANCE, BYBIT, OKX, KRAKEN)\".\n- Have the hoarder README point to KRAKEN.md instead of stating the venue facts.",
+      "tests": "A link check passes. KRAKEN.md names no service of this repo.",
+      "owner_question": "",
+      "source_finding": "F32",
+      "verifier_notes": "Confirmed. The reviewer's claim that kraken \"has no archive\" was rejected as an unverified venue claim (see Rejected)."
+    },
+    {
+      "id": "DXC-30",
+      "title": "Cold legacy README contradicts COLD-AUDIT.md on what the rebuilt audit checks",
+      "severity": "low",
+      "category": "docs-contradiction",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "dev/tooling/src/tools/cold/legacy/README.md:11",
+        "docs/tooling/COLD-AUDIT.md:74-101",
+        "docs/tooling/COLD-AUDIT.md:114-115"
+      ],
+      "problem": "The legacy README says the rebuilt audit does not yet check staging tars or a tar's contents against the record. COLD-AUDIT.md and the code show both checks exist. The legacy evict/reclaim.ts row (\"nothing does now\") may also be stale.",
+      "evidence": "audit/checks/ holds staging.ts and tars.ts. COLD-AUDIT.md:74-88 says staging is the one place a tar is opened and checked against the record.",
+      "fix": "- **Legacy README:11:** \"`cold audit` as it was. What it looked for that the rebuilt one does not: months with a gap between them, and its one-page report.\"\n- **COLD-AUDIT.md:114:** also name the one-page report as not rebuilt, so both docs list the same gap. Confirm first that no report code exists.\n- **reclaim.ts row:** compare legacy/evict/reclaim.ts with audit/checks/staging.ts. If staging.ts covers it, delete reclaim.ts per the folder's own rule. Otherwise, say exactly what reclaim did that staging.ts does not.",
+      "tests": "Doc review against audit/checks/*.ts.",
+      "owner_question": "",
+      "source_finding": "F25",
+      "verifier_notes": "Confirmed (reviewer confidence: medium). The reclaim.ts row was flagged by the verifier and has not been verified."
+    },
+    {
+      "id": "DXC-31",
+      "title": "Archives module README points to docs/services for variables that live in service READMEs",
+      "severity": "low",
+      "category": "docs-accuracy",
+      "decision": "IMPLEMENT",
+      "locations": [
+        "modules/collect/archives/README.md:48-49"
+      ],
+      "problem": "The archives module README sends readers to each service's doc under docs/services/ for its variables. Those variables are in services/<name>/README.md; docs/services/CATALOG.md has no CATALOG_* variables.",
+      "evidence": "services/catalog/README.md lists the CATALOG_* variables. docs/services/CATALOG.md does not.",
+      "fix": "Change \"each service's doc under `docs/services/` for its variables\" to \"each service's README (`services/<name>/README.md`) for its variables\".",
+      "tests": "Doc review.",
+      "owner_question": "",
+      "source_finding": "F28 (part)",
+      "verifier_notes": "This is the bounded half of F28. The file moves are deferred as DXC-32."
+    },
+    {
+      "id": "DXC-32",
+      "title": "docs/modules/ holds non-module docs (CATALOG-API, CATALOG-LENSES); warehouse module has no doc",
+      "severity": "low",
+      "category": "docs-structure",
+      "decision": "DEFER",
+      "locations": [
+        "README.md:53",
+        "docs/modules/CATALOG-API.md",
+        "docs/modules/CATALOG-LENSES.md",
+        "modules/store/warehouse/README.md"
+      ],
+      "problem": "README.md:53 defines docs/modules/ as how services are wired into a deployable pipeline. Two of its three files do not fit:\n- CATALOG-API.md is the catalog service's API.\n- CATALOG-LENSES.md documents the `@tradebot/lenses` package, which has no README of its own.\nThe warehouse module has no docs/modules doc.",
+      "evidence": "`ls docs/modules` gives ARCHIVES.md, CATALOG-API.md and CATALOG-LENSES.md. shared/lenses has no README. `grep -rn 'CATALOG-API\\|CATALOG-LENSES' --include=*.md` finds 19 inbound links.",
+      "fix": "Once the owner picks a home for shared-package docs:\n- Move docs/modules/CATALOG-API.md to docs/services/CATALOG-API.md.\n- Move CATALOG-LENSES.md to that home, as the one article on lenses.\n- Update all 19 links.\n- Either add docs/modules/WAREHOUSE.md, or reword the README.md:53 row.\nDo the moves after DXC-01, DXC-05, DXC-16 and DXC-22 have edited CATALOG-LENSES.md, so those edits land on one file.",
+      "tests": "A link check passes after the moves.",
+      "owner_question": "Where should docs for shared packages live: a new docs/shared/ (e.g. docs/shared/LENSES.md), or alongside the code as shared/lenses/README.md? And should the warehouse module get its own docs/modules/WAREHOUSE.md?",
+      "source_finding": "F28 (part)",
+      "verifier_notes": "Confirmed. The moves are deferred because they touch about 19 links and involve a structural choice."
+    }
+  ],
+  "rejected": [
+    {
+      "title": "F29: Move docs/planning/mental-model.html to planning/archived/",
+      "reason": "The verifier was uncertain, which counts as half a refutation against zero confirmations, so the finding does not survive. Git history (commit 65b05db) shows the owner reviewed this file in the same commit that archived PLAN/BOT/MILESTONES, and chose to leave it in live planning. Its actor model also differs from the archived design. It may be the current bot design. Owner question: is mental-model.html the current bot design? If yes, link it from ROADMAP's dormant bot-app entry. If no, `git mv` it to archived/."
+    },
+    {
+      "title": "F8 sub-item: Strip BitMEX framing from docs/services/VAULT.md",
+      "reason": "Refuted by the verifier. services/vault really is BitMEX-specific in code (data/headers.ts holds BitMEX table column lists), so a venue-neutral description would be wrong. Whether to keep the service is the retirement decision under DXC-23."
+    },
+    {
+      "title": "F9 sub-item: Rename the catalog-ui 'Buckets' label and the `buckets` JSON field",
+      "reason": "This is a code/API change, not documentation, and is out of scope for this docs pass. The docs explain what the field means instead. The UI already labels the bundle as 'Market Bundles'."
+    },
+    {
+      "title": "F32 sub-item: State that kraken has no archive",
+      "reason": "This is an unverified venue claim, which Kraken's published trade-history downloads may contradict. KRAKEN.md states only that its WebSocket API was examined."
+    }
+  ]
+}

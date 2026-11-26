@@ -1,0 +1,1754 @@
+{
+ "baseline": "b8f0ca6",
+ "common_rules": [
+  "CLAUDE.md is binding: dependency direction, venues are providers to everything, VOCABULARY depends on nothing, one home per subject, only what is true today (no history, no plans outside docs/planning/), a doc is about its own subject.",
+  "Verify every claim against the CURRENT code when you write it. Review line numbers are from ac10a6c and are stale; much code has changed since (git log --oneline ac10a6c..HEAD). The review's suggested wording is a starting point, never a fact. When code contradicts a review item, the code wins and the doc describes the code.",
+  "Edit only the files your group owns (its 'files' list). A needed change in another group's file goes into your final report, never into the file.",
+  "Docs only. You may edit prose, comments in config files you own, and docblocks/comments in the source files you own. You never change behaviour, configuration values or tests. Where a review item prescribes a code or config change, check whether a code unit landed it; describe the code as it is and list any gap in your report.",
+  "Moves between groups: the destination group writes the content, reading the source as it stood at the plan baseline (git show b8f0ca6:<path>); the source group deletes its copy and leaves at most a one-line pointer. Neither waits for the other. Move only what is still true; drop what is not.",
+  "Links: point at a file, or at a heading listed under 'Promised anchors' in DOCS-PLAN.md; never at code lines (file.ts#L123). Code docblocks point at docs by file, not by anchor. A pointer to a doc you do not depend on must not be needed to understand your doc. Run a link and anchor check over your files before finishing (scratchpad/reviews/scratch/links.py or equivalent).",
+  "Use the terms of the 'Terminology' section of DOCS-PLAN.md.",
+  "DEFER items are not acted on; where a DEFER blocks a restructure, keep the current arrangement and fix accuracy only.",
+  "Every services/*/README.md you own gets one line 'Deployed by: <module or pack>' or 'Deployed by: no module' (DXC-23), verified against the compose `include`/`path:` entries.",
+  "Final report: items resolved, items partly resolved or moot (with why), code/doc gaps found, changes needed in other groups' files."
+ ],
+ "terminology": [
+  "vault: the Parquet vault stocker writes. The CSV store in services/vault is 'the vault service' wherever it could be confused (not renamed: DCOL-17 / DPLT-25 deferred).",
+  "source: archives, REST or WS (VOCABULARY). 'origin' is used only as the `cold` CLI argument (the tree a command acts on: archives or vault); prose says 'tree'.",
+  "bucket: only an S3 bucket. The venue-wide `@` file is the 'market bundle (`@`)'; stocker's time bucket is a 'period'. The catalog's `buckets` JSON field keeps its name and is described as the count of market-bundle files.",
+  "slice: VOCABULARY's slice. A lens is a 'named selection', never a 'named slice'. Stocker's directory is a 'vault slice' (defined once in STOCKER.md#path-convention). Prospector's write queue is 'the serial write queue'.",
+  "partition: VOCABULARY's (slice x month). Prospector's walk unit with a cursor and a `run` row is a 'scope'; a pass over a venue is a 'job'.",
+  "reconciliation: only prospector's reconcile() after a finished pass. Comparing against a venue's instrument listing is 'the preamble'.",
+  "Shape, Table, Origin, and the `@` spelling of the market bundle are defined in VOCABULARY.md (entry group); other docs use them without redefining.",
+  "Letter folder: `F` (as CATALOG-API.md), never `FL`.",
+  "Revision of a file in prospector: 'the file's previous version (`revision` table)'; VOCABULARY's Revision is the vault stocking identity."
+ ],
+ "promised_anchors": [
+  {
+   "file": "docs/services/PROSPECTOR.md",
+   "anchors": "#storage, #the-api, #status, #reports, #lenses (new, under The API), #configuration, #venue-by-venue (new) with #binance #bitget #bybit #gate #htx #kucoin #okx"
+  },
+  {
+   "file": "docs/services/STOCKER.md",
+   "anchors": "#path-convention, #the-ledger, #canonical-tables, #time, #providers (new)"
+  },
+  {
+   "file": "docs/services/CATALOG.md",
+   "anchors": "#one-database-one-writer, #contents, #lenses"
+  },
+  {
+   "file": "docs/modules/CATALOG-API.md",
+   "anchors": "#contents, #listings, #reporting, #lenses, #errors"
+  },
+  {
+   "file": "docs/modules/CATALOG-LENSES.md",
+   "anchors": "#the-definition, #what-is-refused, #reading-through-a-lens"
+  },
+  {
+   "file": "docs/services/HAULER.md",
+   "anchors": "#the-layout-on-disk (kept, short), #reporting"
+  },
+  {
+   "file": "docs/tooling/COLD.md",
+   "anchors": "#configuration (new), #the-record (new), #how-mega-is-trusted (new), #origins, #where-things-live"
+  },
+  {
+   "file": "docs/tooling/COLD-VAULT.md",
+   "anchors": "#backedupcsv"
+  },
+  {
+   "file": "docs/venues/<VENUE>.md",
+   "anchors": "#archives, #rest, #websocket (where it exists), #publication (new, under Archives)"
+  },
+  {
+   "file": "docs/venues/BINANCE.md",
+   "anchors": "#spot-timestamps-change-unit-in-2025-01 (new), #websocket"
+  },
+  {
+   "file": "docs/venues/OKX.md",
+   "anchors": "#swap-trades-for-2021-10-list-every-trade-twice"
+  },
+  {
+   "file": "docs/venues/KRAKEN.md",
+   "anchors": "#websocket"
+  },
+  {
+   "file": "shared/utils/README.md",
+   "anchors": "#rule-grammar (new)"
+  },
+  {
+   "file": "docs/planning/CATALOG.md",
+   "anchors": "#prospector, #hauler, #instruments-as-an-entity"
+  }
+ ],
+ "moves": [
+  {
+   "source": "docs/DATA_PIPELINE.md",
+   "content": "pipeline overview, source priority, collectors",
+   "destination": "docs/ARCHITECTURE.md",
+   "writer": "entry",
+   "deleter": "entry"
+  },
+  {
+   "source": "docs/DATA_PIPELINE.md",
+   "content": "Replay, 'Origins arrive one at a time', WS/REST collection status",
+   "destination": "docs/planning/ROADMAP.md",
+   "writer": "planning",
+   "deleter": "entry"
+  },
+  {
+   "source": "docs/DATA_PIPELINE.md",
+   "content": "BitMEX paragraph",
+   "destination": "docs/bitmex/README.md",
+   "writer": "entry",
+   "deleter": "entry"
+  },
+  {
+   "source": "docs/ROADMAP.md",
+   "content": "whole file (git mv, then prune)",
+   "destination": "docs/planning/ROADMAP.md",
+   "writer": "planning",
+   "deleter": "planning"
+  },
+  {
+   "source": "docs/services/UI.md",
+   "content": "replay/time-machine design",
+   "destination": "docs/planning/UI.md",
+   "writer": "planning",
+   "deleter": "planning"
+  },
+  {
+   "source": "docs/services/UI.md",
+   "content": "(current stub facts, rewritten from code)",
+   "destination": "services/_stub/ui/README.md",
+   "writer": "platform-infra",
+   "deleter": "planning"
+  },
+  {
+   "source": "docs/bitmex/DEDUP_COMPARISON.md, dedup_validation_2026.md",
+   "content": "whole files (git mv)",
+   "destination": "dev/tooling/.deprecated/data/docs/",
+   "writer": "entry",
+   "deleter": "entry"
+  },
+  {
+   "source": "docs/venues/BITGET-SEED.md; BITGET.md 'Building the seed', 'Why the seed states shapes', eraName mechanics, transforms, depth spellings, key uniqueness",
+   "content": "the bitget seed",
+   "destination": "seeds/README.md (bitget subsection)",
+   "writer": "prospector-satellites",
+   "deleter": "venues-a"
+  },
+  {
+   "source": "docs/venues/BITGET-SEED.md",
+   "content": "index keys that 403; index quiet on recent days",
+   "destination": "docs/venues/BITGET.md",
+   "writer": "venues-a",
+   "deleter": "venues-a"
+  },
+  {
+   "source": "docs/venues/BITGET.md L656-713, L957-959",
+   "content": "discovery v2/v3, 'What this catalog refuses'",
+   "destination": "PROSPECTOR.md#bitget",
+   "writer": "prospector-doc",
+   "deleter": "venues-a"
+  },
+  {
+   "source": "docs/venues/OKX.md",
+   "content": "prospector behaviour still true (bucket series, preopen, pacing, RATES_START)",
+   "destination": "PROSPECTOR.md#okx",
+   "writer": "prospector-doc",
+   "deleter": "venues-a"
+  },
+  {
+   "source": "docs/venues/OKX.md",
+   "content": "planned re-walk",
+   "destination": "docs/planning/CATALOG.md",
+   "writer": "planning",
+   "deleter": "venues-a"
+  },
+  {
+   "source": "docs/venues/GATE.md L193-198, L215-265, L320-323, L348, L350-357",
+   "content": "catalog mechanics, tradfi handling",
+   "destination": "PROSPECTOR.md#gate",
+   "writer": "prospector-doc",
+   "deleter": "venues-b"
+  },
+  {
+   "source": "docs/venues/GATE.md L430-436",
+   "content": "SUN_USDT REST item, sweep proposal",
+   "destination": "docs/planning/REST.md (Gate)",
+   "writer": "planning",
+   "deleter": "venues-b"
+  },
+  {
+   "source": "docs/venues/GATE.md L388-391, L442, L447-451; BITGET.md:80; HTX spill remark",
+   "content": "stocker handling",
+   "destination": "STOCKER-PARTITIONS.md (ensure present)",
+   "writer": "stocker",
+   "deleter": "venues-b / venues-a"
+  },
+  {
+   "source": "docs/venues/HTX.md L318-349, L433-453, L447-453",
+   "content": "take-or-refuse reasoning; data/ end",
+   "destination": "PROSPECTOR.md#htx",
+   "writer": "prospector-doc",
+   "deleter": "venues-b"
+  },
+  {
+   "source": "docs/venues/BYBIT.md",
+   "content": "adapter rate, limiter, accepts",
+   "destination": "PROSPECTOR.md#bybit",
+   "writer": "prospector-doc",
+   "deleter": "venues-b"
+  },
+  {
+   "source": "docs/venues/BINANCE.md",
+   "content": "categoryOf/preamble handling, survey-root rule, accepts refusals and costs, happy-eyeballs note",
+   "destination": "PROSPECTOR.md#binance (and HTTP section)",
+   "writer": "prospector-doc",
+   "deleter": "venues-b"
+  },
+  {
+   "source": "docs/venues/BINANCE.md L59-63",
+   "content": "catalog plan",
+   "destination": "docs/planning/CATALOG.md",
+   "writer": "planning",
+   "deleter": "venues-b"
+  },
+  {
+   "source": "docs/venues/BINANCE.md L324-332",
+   "content": "cold-storage state",
+   "destination": "docs/tooling/COLD.md (only if true)",
+   "writer": "tooling",
+   "deleter": "venues-b"
+  },
+  {
+   "source": "docs/services/PROSPECTOR.md",
+   "content": "per-venue publication delays",
+   "destination": "docs/venues/<VENUE>.md#publication",
+   "writer": "venues-a / venues-b",
+   "deleter": "prospector-doc"
+  },
+  {
+   "source": "docs/services/PROSPECTOR.md",
+   "content": "exclusion reasoning facts (htx overlap, remark.txt, kucoin 1d, bybit root keys)",
+   "destination": "HTX, KUCOIN, BYBIT",
+   "writer": "venues-b",
+   "deleter": "prospector-doc"
+  },
+  {
+   "source": "docs/services/PROSPECTOR.md",
+   "content": "venue figures ~1507-1510, ~1573-1575; okx 'known only from below'; per-venue concurrency arithmetic",
+   "destination": "venue docs",
+   "writer": "venues-a / venues-b",
+   "deleter": "prospector-doc"
+  },
+  {
+   "source": "docs/services/PROSPECTOR.md 233-251",
+   "content": "seed format",
+   "destination": "seeds/README.md",
+   "writer": "prospector-satellites",
+   "deleter": "prospector-doc"
+  },
+  {
+   "source": "docs/services/PROSPECTOR.md 312-313; README",
+   "content": "adding a venue; env table",
+   "destination": "services/prospector/README.md",
+   "writer": "prospector-satellites",
+   "deleter": "prospector-doc"
+  },
+  {
+   "source": "docs/services/PROSPECTOR.md; migrations/index.ts",
+   "content": "migration policy future clause; OVERDUE_DAYS proposals; gate probingLag question",
+   "destination": "docs/planning/CATALOG.md",
+   "writer": "planning",
+   "deleter": "prospector-doc / prospector-satellites"
+  },
+  {
+   "source": "docs/services/STOCKER*.md",
+   "content": "binance ms->us; measured format evidence",
+   "destination": "BINANCE.md#spot-timestamps-change-unit-in-2025-01; venue docs",
+   "writer": "venues-b",
+   "deleter": "stocker"
+  },
+  {
+   "source": "docs/services/STOCKER*.md",
+   "content": "unverified entries, okx funding check, okx 2021-10 trades, margin stopgap, settlement",
+   "destination": "docs/planning/STOCKER.md",
+   "writer": "planning",
+   "deleter": "stocker"
+  },
+  {
+   "source": "docs/services/STOCKER.md",
+   "content": "backedup.csv format",
+   "destination": "docs/tooling/COLD-VAULT.md#backedupcsv",
+   "writer": "tooling",
+   "deleter": "stocker"
+  },
+  {
+   "source": "docs/services/HAULER.md 'The layout on disk'",
+   "content": "key layout rationale",
+   "destination": "docs/modules/CATALOG-API.md#listings",
+   "writer": "catalog",
+   "deleter": "archives-hauler"
+  },
+  {
+   "source": "docs/modules/CATALOG-LENSES.md 'Who reads through one'",
+   "content": "disjoint lens per downloader",
+   "destination": "docs/services/HAULER.md",
+   "writer": "archives-hauler",
+   "deleter": "catalog"
+  },
+  {
+   "source": "docs/services/CATALOG-UI.md :219-223",
+   "content": "the every-host rule (completedEver)",
+   "destination": "PROSPECTOR.md#status",
+   "writer": "prospector-doc",
+   "deleter": "catalog"
+  },
+  {
+   "source": "docs/modules/ARCHIVES.md 'Running it', 'Starting a survey'",
+   "content": "operational content",
+   "destination": "modules/collect/archives/README.md",
+   "writer": "archives-hauler",
+   "deleter": "archives-hauler"
+  },
+  {
+   "source": "docs/VOCABULARY.md Snapshot",
+   "content": "incremental snapshot mechanics",
+   "destination": "docs/tooling/COLD-CATALOG.md",
+   "writer": "tooling",
+   "deleter": "entry"
+  },
+  {
+   "source": "docs/VOCABULARY.md Run",
+   "content": "one-unfinished-run rule",
+   "destination": "PROSPECTOR.md",
+   "writer": "prospector-doc",
+   "deleter": "entry"
+  },
+  {
+   "source": "docs/tooling/COLD-CATALOG.md 'Not built'; COLD-AUDIT gap check / one-page report",
+   "content": "unbuilt designs",
+   "destination": "docs/planning/COLD.md",
+   "writer": "planning",
+   "deleter": "tooling"
+  },
+  {
+   "source": "docs/services/ROUTER.md; services/pipe/README.md",
+   "content": "rule grammar",
+   "destination": "shared/utils/README.md#rule-grammar",
+   "writer": "messaging-vault",
+   "deleter": "messaging-vault"
+  },
+  {
+   "source": "services/hoarder/README.md; hoarder kraken.ts docblock",
+   "content": "Kraken venue facts",
+   "destination": "docs/venues/KRAKEN.md",
+   "writer": "venues-b",
+   "deleter": "messaging-vault"
+  },
+  {
+   "source": "services/hoarder/README.md; binance.ts docblock",
+   "content": "Binance WS protocol traps",
+   "destination": "docs/venues/BINANCE.md#websocket",
+   "writer": "venues-b",
+   "deleter": "messaging-vault"
+  },
+  {
+   "source": "services/hoarder",
+   "content": "intent to collect Binance futures (only if stated)",
+   "destination": "docs/planning/ROADMAP.md",
+   "writer": "planning",
+   "deleter": "messaging-vault"
+  }
+ ],
+ "deferred": [
+  {
+   "items": "DXC-17 / DVEN-18 (and DPLT-12)",
+   "question": "Where REST knowledge lives",
+   "effect": "docs/REST.md, docs/planning/REST.md and each venue's REST section stay as they are; accuracy fixes only."
+  },
+  {
+   "items": "DXC-32",
+   "question": "Where shared-package docs live; WAREHOUSE.md",
+   "effect": "CATALOG-API.md and CATALOG-LENSES.md stay in docs/modules/; no WAREHOUSE.md. shared/utils/README.md is created anyway as a package README (DCOL-08); revisit if the owner picks docs/shared/."
+  },
+  {
+   "items": "DPR2-13",
+   "question": "Split PROSPECTOR.md",
+   "effect": "Kept as one file, one writer group; only the in-file single homes that IMPLEMENT items require."
+  },
+  {
+   "items": "DVEN-29",
+   "question": "Fixed venue-doc template; CI link check",
+   "effect": "No reorder; each venue doc keeps its shape. Writers run a local link check; no CI change."
+  },
+  {
+   "items": "DTL-20",
+   "question": "Restructure the cold docs per tree, new docs/tooling/README.md",
+   "effect": "Current cold doc set kept; COLD.md gains the shared sections the IMPLEMENT items ask for."
+  },
+  {
+   "items": "DCOL-26",
+   "question": "One convention for the RabbitMQ service docs",
+   "effect": "ROUTER.md stays in docs/services; router, pipe and hoarder READMEs keep their shape."
+  },
+  {
+   "items": "DCOL-17 / DPLT-25",
+   "question": "Future of the vault service; its name and mount",
+   "effect": "VAULT.md and services/vault keep their names; 'the vault service' in prose; vault code comments naming retired services untouched."
+  },
+  {
+   "items": "DCAT-23",
+   "question": "Rename/split planning/CATALOG.md; is 'data we do not want' solved",
+   "effect": "planning/CATALOG.md keeps name and scope; the ROADMAP paragraph is kept."
+  },
+  {
+   "items": "DPLT-23",
+   "question": "Are the queue and cache infra packs wanted; cache hostname",
+   "effect": "The infra README documents the packs as they are."
+  },
+  {
+   "items": "DPLT-24",
+   "question": "Delete docs/planning/archived/",
+   "effect": "Kept."
+  },
+  {
+   "items": "DPLT-26",
+   "question": "Python Dockerfiles",
+   "effect": "Mentioned in one line in docker/README.md."
+  },
+  {
+   "items": "CUI-21 (code unit)",
+   "question": "catalog-ui port exposure",
+   "effect": "Docs state the binding as compose has it; no doc implies the token protects an exposed port."
+  }
+ ],
+ "left_out": [
+  {
+   "item": "DPLT-12",
+   "reason": "Its whole fix is the REST restructure (move venue facts out of planning/REST.md, trim docs/REST.md) that DXC-17 and DVEN-18 defer to the owner. docs/REST.md and planning/REST.md keep their current arrangement."
+  }
+ ],
+ "partial": [
+  {
+   "item": "DXC-03 / DPLT-04",
+   "note": "The 'data we do not want' ROADMAP paragraph is kept (only its dead link removed) because DCAT-23 defers whether it is solved."
+  },
+  {
+   "item": "DPLT-21",
+   "note": "mental-model.html is not moved to archived/: the consistency review rejected that move (F29, the owner kept it deliberately). The dead link and the ROADMAP bot sentence are done."
+  },
+  {
+   "item": "SUI-02",
+   "note": "docs/services/UI.md is deleted (DXC-15 / DCAT-05) instead of rewritten; SUI-02's current-state content goes to services/_stub/ui/README.md and its design to docs/planning/UI.md."
+  },
+  {
+   "item": "DVEN-18 bounded part",
+   "note": "Not done: it is part of a DEFER item (merging KUCOIN/HTX/BINANCE listing sections)."
+  },
+  {
+   "item": "DPR2-13 bounded part",
+   "note": "Not done beyond what IMPLEMENT items require: within-file single homes from DPR1-12/DPR1-17/DPR2-01/DPR2-02 are done; the wider pointer list and the split wait for the owner."
+  },
+  {
+   "item": "DXC-30 / DTL-11",
+   "note": "Mostly moot: legacy/ was deleted by TCL-14 (7608faa). What remains is that COLD-AUDIT and planning/COLD.md agree."
+  },
+  {
+   "item": "Code/config parts of docs items",
+   "note": "DSTK-01/02, DCAT-03/04, DCOL-01/04/06/16, DTL-06/07, DPLT-01/09 and similar prescribe code or config changes. Writers do not make them; most landed through the code units (verify), the rest are reported."
+  }
+ ],
+ "map": [
+  {
+   "file": "README.md",
+   "subject": "What the project is, services vs modules, how to run a module, and the index of where each kind of doc lives",
+   "action": "rewrite",
+   "group": "entry"
+  },
+  {
+   "file": "docs/ARCHITECTURE.md",
+   "subject": "The pipeline today, one page: stages and the boundary each owns, source priority (bulk > REST > WS, single deep home), which module deploys what; links to every stage doc",
+   "action": "create",
+   "group": "entry"
+  },
+  {
+   "file": "docs/DATA_PIPELINE.md",
+   "subject": "Replaced by ARCHITECTURE.md; its plans go to docs/planning/ROADMAP.md, its BitMEX paragraph to docs/bitmex/README.md",
+   "action": "merge-into:docs/ARCHITECTURE.md",
+   "group": "entry"
+  },
+  {
+   "file": "docs/VOCABULARY.md",
+   "subject": "Definitions of the platform terms, nothing else (depends on nothing)",
+   "action": "rewrite",
+   "group": "entry"
+  },
+  {
+   "file": ".github/copilot-instructions.md",
+   "subject": "Pointer for coding agents to CLAUDE.md and README.md (already corrected upstream)",
+   "action": "keep",
+   "group": "entry"
+  },
+  {
+   "file": "docs/bitmex/README.md",
+   "subject": "The BitMEX dataset this repo collected before the venue closed: what it is, its source suffixes, what was done to it",
+   "action": "rewrite",
+   "group": "entry"
+  },
+  {
+   "file": "docs/bitmex/TABLES.md",
+   "subject": "The BitMEX tables of that dataset; points at the vault service code for columns and typing",
+   "action": "keep",
+   "group": "entry"
+  },
+  {
+   "file": "docs/bitmex/DEDUP_COMPARISON.md",
+   "subject": "Working log of the deprecated dedup tooling; moved unchanged next to DATA-DEDUP.md",
+   "action": "merge-into:dev/tooling/.deprecated/data/docs/DEDUP_COMPARISON.md",
+   "group": "entry"
+  },
+  {
+   "file": "docs/bitmex/dedup_validation_2026.md",
+   "subject": "Working log of the deprecated dedup tooling; moved unchanged next to DATA-DEDUP.md",
+   "action": "merge-into:dev/tooling/.deprecated/data/docs/dedup_validation_2026.md",
+   "group": "entry"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/DEDUP_COMPARISON.md",
+   "subject": "Moved log (git mv, content unchanged)",
+   "action": "create",
+   "group": "entry"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/dedup_validation_2026.md",
+   "subject": "Moved log (git mv, content unchanged)",
+   "action": "create",
+   "group": "entry"
+  },
+  {
+   "file": "docs/ROADMAP.md",
+   "subject": "Moved to docs/planning/ROADMAP.md (plans live in docs/planning)",
+   "action": "merge-into:docs/planning/ROADMAP.md",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/ROADMAP.md",
+   "subject": "Where the project is heading: open goals per concern (collect, normalise, replay, simulator), pruned of landed work; receives the plans cut from DATA_PIPELINE.md",
+   "action": "create",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/BUGS.md",
+   "subject": "Open, re-checkable bugs",
+   "action": "rewrite",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/CATALOG.md",
+   "subject": "Open work on the archives pipeline (catalog, prospector, hauler); name and scope kept (DCAT-23 deferred)",
+   "action": "rewrite",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/COLD.md",
+   "subject": "Open work on cold storage only",
+   "action": "rewrite",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/STOCKER.md",
+   "subject": "The single open-work list for stocker",
+   "action": "rewrite",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/REST.md",
+   "subject": "The REST survey and REST-collector plan, kept as is (DXC-17 / DVEN-18 deferred); link fixes and one incoming gate item only",
+   "action": "keep",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/UI.md",
+   "subject": "The intended design of a replay-capable UI (time machine, widgets as pure consumers, hook/channel contract, replay switch), venue-neutral",
+   "action": "create",
+   "group": "planning"
+  },
+  {
+   "file": "docs/services/UI.md",
+   "subject": "No running service backs it; design moves to docs/planning/UI.md, current stub facts to services/_stub/ui/README.md",
+   "action": "merge-into:docs/planning/UI.md",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/archived/README.md",
+   "subject": "Why the archived plans are kept (DPLT-24 deferred)",
+   "action": "keep",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/archived/BOT.md",
+   "subject": "Archived bot plan",
+   "action": "keep",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/archived/MILESTONES.md",
+   "subject": "Archived milestones",
+   "action": "keep",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/archived/PLAN.md",
+   "subject": "Archived plan; one dead link unlinked",
+   "action": "keep",
+   "group": "planning"
+  },
+  {
+   "file": "docs/planning/mental-model.html",
+   "subject": "Bot actor model; left in place (review finding F29 rejected; owner question open)",
+   "action": "keep",
+   "group": "planning"
+  },
+  {
+   "file": "docs/venues/OKX.md",
+   "subject": "OKX as a provider: archives, index, REST, WebSocket, quirks, limits; no service of this repo",
+   "action": "rewrite",
+   "group": "venues-a"
+  },
+  {
+   "file": "docs/venues/BITGET.md",
+   "subject": "Bitget as a provider: archives and download index, REST; no service of this repo",
+   "action": "rewrite",
+   "group": "venues-a"
+  },
+  {
+   "file": "docs/venues/BITGET-SEED.md",
+   "subject": "Prospector's bitget seed, filed under venues; its still-true content becomes the bitget subsection of the seeds README",
+   "action": "merge-into:services/prospector/src/database/migrations/seeds/README.md",
+   "group": "venues-a"
+  },
+  {
+   "file": "docs/venues/BINANCE.md",
+   "subject": "Binance as a provider: archives, REST, WebSocket",
+   "action": "rewrite",
+   "group": "venues-b"
+  },
+  {
+   "file": "docs/venues/BYBIT.md",
+   "subject": "Bybit as a provider: archives, REST, WebSocket",
+   "action": "rewrite",
+   "group": "venues-b"
+  },
+  {
+   "file": "docs/venues/GATE.md",
+   "subject": "Gate as a provider: archives, REST",
+   "action": "rewrite",
+   "group": "venues-b"
+  },
+  {
+   "file": "docs/venues/HTX.md",
+   "subject": "HTX as a provider: archives (two trees), REST",
+   "action": "rewrite",
+   "group": "venues-b"
+  },
+  {
+   "file": "docs/venues/KUCOIN.md",
+   "subject": "KuCoin as a provider (the clean reference doc); gains publication and file-format facts",
+   "action": "keep",
+   "group": "venues-b"
+  },
+  {
+   "file": "docs/venues/KRAKEN.md",
+   "subject": "Kraken as a provider: its WebSocket API only (the only part examined)",
+   "action": "create",
+   "group": "venues-b"
+  },
+  {
+   "file": "docs/REST.md",
+   "subject": "Cross-venue REST comparison, kept where it is (DXC-17 / DVEN-18 deferred); accuracy fixes only",
+   "action": "keep",
+   "group": "venues-b"
+  },
+  {
+   "file": "docs/services/PROSPECTOR.md",
+   "subject": "Prospector's design: model, lifecycle, survey, pacing and transport, API, storage (one home of who writes which table), series rules, and how it handles each venue ('Venue by venue')",
+   "action": "rewrite",
+   "group": "prospector-doc"
+  },
+  {
+   "file": "services/prospector/README.md",
+   "subject": "Prospector operator page: env table (one home), mount, ports, walk schedule, adding a venue, deployed by",
+   "action": "rewrite",
+   "group": "prospector-satellites"
+  },
+  {
+   "file": "services/prospector/src/database/migrations/seeds/README.md",
+   "subject": "The seeds: the two kinds, format (one home), layout, examples, and a bitget subsection (from BITGET-SEED.md)",
+   "action": "rewrite",
+   "group": "prospector-satellites"
+  },
+  {
+   "file": "docs/services/STOCKER.md",
+   "subject": "Stocker's design: sweep, revision, ledger, path convention, canonical tables (one home), build, time, providers",
+   "action": "rewrite",
+   "group": "stocker"
+  },
+  {
+   "file": "docs/services/STOCKER-PARTITIONS.md",
+   "subject": "Per-venue series mapping: how each venue format is read into the canonical tables; handling only, evidence linked to venue docs",
+   "action": "rewrite",
+   "group": "stocker"
+  },
+  {
+   "file": "services/stocker/README.md",
+   "subject": "Stocker operator page: storage contract of the vault root, configuration, extending, development, deployed by",
+   "action": "rewrite",
+   "group": "stocker"
+  },
+  {
+   "file": "modules/store/warehouse/README.md",
+   "subject": "The warehouse module: what it runs, storage, variables",
+   "action": "keep",
+   "group": "stocker"
+  },
+  {
+   "file": "docs/services/CATALOG.md",
+   "subject": "The catalog service's implementation: one database one writer, contents, listings, lenses, caches, forwarding, configuration pointers",
+   "action": "rewrite",
+   "group": "catalog"
+  },
+  {
+   "file": "docs/services/CATALOG-UI.md",
+   "subject": "The catalog UI and its proxy: sections, what it derives, the forwarded routes and guarantees",
+   "action": "rewrite",
+   "group": "catalog"
+  },
+  {
+   "file": "docs/modules/CATALOG-API.md",
+   "subject": "The catalog's wire contract (contents, partitions and settled, listings and key grammar, reporting, lenses, errors); location kept (DXC-32 deferred)",
+   "action": "rewrite",
+   "group": "catalog"
+  },
+  {
+   "file": "docs/modules/CATALOG-LENSES.md",
+   "subject": "What a lens is: definition, what is refused, resolving, cost, reading through one; location kept (DXC-32 deferred)",
+   "action": "rewrite",
+   "group": "catalog"
+  },
+  {
+   "file": "services/catalog/README.md",
+   "subject": "Catalog operator page: variables, ports, pointer to CATALOG-API, deployed by",
+   "action": "rewrite",
+   "group": "catalog"
+  },
+  {
+   "file": "services/catalog-ui/README.md",
+   "subject": "Catalog UI operator page: what it is, build and dev (one home), variables, deployed by",
+   "action": "rewrite",
+   "group": "catalog"
+  },
+  {
+   "file": "docs/modules/ARCHIVES.md",
+   "subject": "The archives module design: flow, the four services, why it is split, enrolment and token in one sentence each",
+   "action": "rewrite",
+   "group": "archives-hauler"
+  },
+  {
+   "file": "modules/collect/archives/README.md",
+   "subject": "The archives module operational page: services, commands, full variable table, catalog dir setup, starting surveys",
+   "action": "rewrite",
+   "group": "archives-hauler"
+  },
+  {
+   "file": "docs/services/HAULER.md",
+   "subject": "Hauler's design: walking a listing, verifying, address rotation, reporting, stopping; layout only as a short pointer to CATALOG-API",
+   "action": "rewrite",
+   "group": "archives-hauler"
+  },
+  {
+   "file": "services/hauler/README.md",
+   "subject": "Hauler operator page: variables, behaviour summary, deployed by",
+   "action": "rewrite",
+   "group": "archives-hauler"
+  },
+  {
+   "file": "docs/services/ROUTER.md",
+   "subject": "The router: router-specific rule semantics, message flow, backpressure, configuration, health (location kept, DCOL-26 deferred)",
+   "action": "rewrite",
+   "group": "messaging-vault"
+  },
+  {
+   "file": "docs/services/VAULT.md",
+   "subject": "The vault service (BitMEX CSV store): file layout, CSV, HTTP API, write pipeline, closing, restart, shutdown, tuning (name kept, DCOL-17 deferred)",
+   "action": "rewrite",
+   "group": "messaging-vault"
+  },
+  {
+   "file": "services/router/README.md",
+   "subject": "Router operator page, pointing at ROUTER.md for the table",
+   "action": "rewrite",
+   "group": "messaging-vault"
+  },
+  {
+   "file": "services/pipe/README.md",
+   "subject": "Pipe operator page: pipe-specific restrictions on the shared grammar, variables, examples",
+   "action": "rewrite",
+   "group": "messaging-vault"
+  },
+  {
+   "file": "services/hoarder/README.md",
+   "subject": "Hoarder operator page: what it publishes and where, venues, status, deployed by",
+   "action": "rewrite",
+   "group": "messaging-vault"
+  },
+  {
+   "file": "services/vault/README.md",
+   "subject": "Vault service operator page: ports, variables, data dir, deployed by",
+   "action": "rewrite",
+   "group": "messaging-vault"
+  },
+  {
+   "file": "shared/utils/README.md",
+   "subject": "The @tradebot/utils package; its \"Rule grammar\" section is the single home of the route-rule grammar",
+   "action": "create",
+   "group": "messaging-vault"
+  },
+  {
+   "file": "docker/README.md",
+   "subject": "The four Dockerfiles and two entrypoints: selection, build args, prod and dev images, .dockerignore",
+   "action": "rewrite",
+   "group": "platform-infra"
+  },
+  {
+   "file": "modules/infra/README.md",
+   "subject": "The infra packs: which brokers and cache each defines, hostnames, root .env variables",
+   "action": "rewrite",
+   "group": "platform-infra"
+  },
+  {
+   "file": "services/rabbitmq/README.md",
+   "subject": "The RabbitMQ service definition on its own terms",
+   "action": "rewrite",
+   "group": "platform-infra"
+  },
+  {
+   "file": "services/redis/README.md",
+   "subject": "The Redis service definition on its own terms",
+   "action": "rewrite",
+   "group": "platform-infra"
+  },
+  {
+   "file": "services/_stub/ui/README.md",
+   "subject": "The BitMEX-era UI stub as it is today; points at docs/planning/UI.md for the intended design",
+   "action": "rewrite",
+   "group": "platform-infra"
+  },
+  {
+   "file": "dev/tooling/README.md",
+   "subject": "The ./tools developer CLI: build, env precedence, global options, rabbit, monitor, remote, and a pointer for cold",
+   "action": "rewrite",
+   "group": "tooling"
+  },
+  {
+   "file": "docs/tooling/COLD.md",
+   "subject": "Cold storage, what all commands share: subcommands, origins, configuration, where things live, the record, how Mega is trusted, watching",
+   "action": "rewrite",
+   "group": "tooling"
+  },
+  {
+   "file": "docs/tooling/COLD-PUSH.md",
+   "subject": "`cold push` for the archives",
+   "action": "rewrite",
+   "group": "tooling"
+  },
+  {
+   "file": "docs/tooling/COLD-EVICT.md",
+   "subject": "`cold evict` for the archives",
+   "action": "rewrite",
+   "group": "tooling"
+  },
+  {
+   "file": "docs/tooling/COLD-PULL.md",
+   "subject": "`cold pull` for the archives",
+   "action": "keep",
+   "group": "tooling"
+  },
+  {
+   "file": "docs/tooling/COLD-VAULT.md",
+   "subject": "Every cold command on the vault tree; home of backedup.csv format",
+   "action": "rewrite",
+   "group": "tooling"
+  },
+  {
+   "file": "docs/tooling/COLD-CATALOG.md",
+   "subject": "Cold's copy of the catalog: snapshots, push and pull catalog",
+   "action": "rewrite",
+   "group": "tooling"
+  },
+  {
+   "file": "docs/tooling/COLD-AUDIT.md",
+   "subject": "`cold audit`: checks and fixes",
+   "action": "rewrite",
+   "group": "tooling"
+  },
+  {
+   "file": "CLAUDE.md",
+   "subject": "Documentation rules (binding; not edited by this pass)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/agents/ci-monitor-subagent.agent.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/prompts/monitor-ci.prompt.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/link-workspace-packages/SKILL.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/monitor-ci/SKILL.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-generate/SKILL.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-import/SKILL.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-import/references/GRADLE.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-import/references/JEST.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-import/references/NEXT.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-import/references/TURBOREPO.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-import/references/VITE.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-plugins/SKILL.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-run-tasks/SKILL.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-workspace/SKILL.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": ".github/skills/nx-workspace/references/AFFECTED.md",
+   "subject": "Nx-generated agent/skill instructions",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dev/tooling/.deprecated/README.md",
+   "subject": "Docs of deprecated data tooling",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/DATA-DEDUP.md",
+   "subject": "Docs of deprecated data tooling",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/DATA-PREPARE.md",
+   "subject": "Docs of deprecated data tooling",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/DATA-RECOVER.md",
+   "subject": "Docs of deprecated data tooling",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/DATA-RESORT.md",
+   "subject": "Docs of deprecated data tooling",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/DATA-STATUS.md",
+   "subject": "Docs of deprecated data tooling",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dev/tooling/.deprecated/data/docs/DATA-SYNC.md",
+   "subject": "Docs of deprecated data tooling",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/.github/copilot-instructions.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/LICENSE.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/README.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/USAGE.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/docs/commands.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/tests/README.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/tests/fixtures/modules/testmod/README.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "dx/tests/fixtures/services/testapp/README.md",
+   "subject": "dx submodule (separate repository): the tb compose wrapper",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/netgate/README.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/README.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/docs/api.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/docs/backpressure.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/docs/connection.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/docs/consuming.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/docs/examples.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/docs/publishing.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/rabbitmq/docs/topology.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/service-kit/README.md",
+   "subject": "Package submodule (separate repository)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "packages/service-kit/docs/README.md",
+   "subject": "Package submodule (separate repository) (empty file; flag to the owner)",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "services/.deprecated/README.md",
+   "subject": "Docs of a retired service, kept with it",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "services/.deprecated/scribe/README.md",
+   "subject": "Docs of a retired service, kept with it",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "services/.deprecated/scribe/SCRIBE.md",
+   "subject": "Docs of a retired service, kept with it",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "services/.deprecated/tardy/README.md",
+   "subject": "Docs of a retired service, kept with it",
+   "action": "keep",
+   "group": "frozen"
+  },
+  {
+   "file": "services/.deprecated/tardy/TARDY.md",
+   "subject": "Docs of a retired service, kept with it",
+   "action": "keep",
+   "group": "frozen"
+  }
+ ],
+ "groups": [
+  {
+   "name": "entry",
+   "files": [
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/DATA_PIPELINE.md",
+    "docs/VOCABULARY.md",
+    ".github/copilot-instructions.md",
+    "docs/bitmex/README.md",
+    "docs/bitmex/TABLES.md",
+    "docs/bitmex/DEDUP_COMPARISON.md",
+    "docs/bitmex/dedup_validation_2026.md",
+    "dev/tooling/.deprecated/data/docs/DEDUP_COMPARISON.md",
+    "dev/tooling/.deprecated/data/docs/dedup_validation_2026.md"
+   ],
+   "items": [
+    "DXC-02",
+    "DXC-10",
+    "DXC-20",
+    "DPLT-03",
+    "DPLT-05",
+    "DPLT-13",
+    "DPLT-16",
+    "DPLT-20",
+    "DSTK-16",
+    "DTL-10",
+    "shared:SHR-06"
+   ],
+   "depends_on_code": [
+    "modules/collect/archives",
+    "modules/store/warehouse"
+   ],
+   "instructions": "Schedule LAST: README.md and ARCHITECTURE.md link into every other group's docs, and you run the final repo-wide link check.\n1. docs/ARCHITECTURE.md (create; about one page; present tense). One ASCII diagram: prospector -> catalog (+ lenses) -> hauler -> archives -> stocker -> Parquet vault, with `./tools cold` backing up the archives, the vault and the catalog. One paragraph per stage on the boundary it owns, linking docs/services/<X>.md. The modules that deploy them (docs/modules/ARCHIVES.md, modules/store/warehouse/README.md) and the services no module deploys (hoarder, router, pipe, the vault service, the UI stub), said plainly without 'parked'/'not yet'. The principle: collection is byte-faithful, normalisation is a separate pass. Source priority bulk -> REST -> WS: ARCHITECTURE.md is its single deep home (decision: README keeps its short pitch and points here; DXC-02 and DPLT-03 disagreed). The collectors at overview depth. WebSocket: 'the WebSocket section of each venue doc that has one (BINANCE, BYBIT, OKX, KRAKEN)' (DXC-29 pointer part). The vault layout only by pointer to STOCKER.md#path-convention, never 'one file per instrument' (DXC-04, DSTK-03, DSTK-15). The vault service only as the store holding the BitMEX dataset (pointer to docs/bitmex/README.md and services/VAULT.md). No venue names, no history, no plans, no restatement of stocker's schema rules.\n2. docs/DATA_PIPELINE.md: delete. Its plans (Replay, 'Origins arrive one at a time', WS/REST collection status) are written into docs/planning/ROADMAP.md by planning; its BitMEX paragraph goes into docs/bitmex/README.md (you); 'Retired' and 'Where raw lands' history are dropped. Re-point every link you own that targets it.\n3. README.md (DXC-02, DPLT-05, DTL-10, DXC-11 README.md:55 part): point readers at ARCHITECTURE.md; doc table rows for ARCHITECTURE.md, VOCABULARY.md, docs/planning/ (ROADMAP there), docs/tooling/ = the `./tools` developer CLI (dev/tooling) including `./tools cold`, and one line that `tb` is the dx compose wrapper (verify the new ./tb script, commit b8f0ca6); docs/services/ = one reference per documented service; docs/modules/ described as it is today (module docs plus the catalog API and lens references; do not move them, DXC-32 deferred); docs/bitmex/ = a dataset this repo collected, not the venue (DPLT-20). Verify the .env claims against how dx/./tb load env. Keep the venue-naming rule paragraph.\n4. docs/VOCABULARY.md (DPLT-13, DPLT-16, DSTK-16, DXC-10, DTL-10): definitions only. Fix Partition, Revision, Run, Snapshot, Catalog and Chain per those items; strip every operation or behaviour (Snapshot mechanics are written into COLD-CATALOG.md by tooling; Run's one-unfinished-run rule into PROSPECTOR.md by prospector-doc; delete them here). Add: Shape; Table; under Bundle that the market bundle is spelled `@`; Origin (cold storage, not a source); under Vault 'not the vault service (services/vault)'; one-liners for Series, Canonical key, Seed, Tip, Floor, Era, Ledger, Backfill only where the term is used in several docs, each meaning taken from its home doc. No venue facts, no service internals. Follow the Terminology section; other groups rely on it.\n5. docs/bitmex (DPLT-20, SHR-06): README names the source suffixes (.s3, .local, .antel, .mtav, .tardis, .prepared, .mongo; one line each), a 4-6 line 'What was done to it' summary of the two logs, and DATA_PIPELINE's BitMEX paragraph if not already covered; `git mv` DEDUP_COMPARISON.md and dedup_validation_2026.md to dev/tooling/.deprecated/data/docs/ unchanged; TABLES.md points only at services/vault/src/data/headers.ts (columns) and casts.ts (typing). Stays out of docs/venues (it names services).\n6. .github/copilot-instructions.md: already corrected upstream; verify its two links only.\n7. DXC-20 final pass: after all groups, run the link and anchor checker over every in-scope .md (exclude submodules, node_modules, .deprecated, the external ../tradebot-sim links). Fix your own files; report the rest to the orchestrator with file and target.\nThe DXC-10 renames inside other groups' files are listed in their instructions; you own only the definitions."
+  },
+  {
+   "name": "planning",
+   "files": [
+    "docs/ROADMAP.md",
+    "docs/planning/ROADMAP.md",
+    "docs/planning/BUGS.md",
+    "docs/planning/CATALOG.md",
+    "docs/planning/COLD.md",
+    "docs/planning/STOCKER.md",
+    "docs/planning/REST.md",
+    "docs/planning/UI.md",
+    "docs/services/UI.md",
+    "docs/planning/archived/README.md",
+    "docs/planning/archived/BOT.md",
+    "docs/planning/archived/MILESTONES.md",
+    "docs/planning/archived/PLAN.md",
+    "docs/planning/mental-model.html"
+   ],
+   "items": [
+    "DXC-03",
+    "DXC-06",
+    "DXC-07",
+    "DXC-15",
+    "DPLT-04",
+    "DPLT-06",
+    "DPLT-15",
+    "DPLT-17",
+    "DPLT-18",
+    "DPLT-21",
+    "DTL-02",
+    "DCAT-20",
+    "DCOL-25",
+    "DSTK-06",
+    "prospector-catalog:PRC-07"
+   ],
+   "depends_on_code": [
+    "services/prospector",
+    "services/stocker",
+    "services/hauler",
+    "dev/tooling"
+   ],
+   "instructions": "Plans hold only open work, may use future tense, and carry no history or dated progress logs. Before cutting an item as landed, verify it in the code or git log; when unsure, keep it and say so in the report (owner sub-questions DXC-06, DXC-07).\n1. `git mv docs/ROADMAP.md docs/planning/ROADMAP.md` and fix its relative links. Prune (DXC-03, DPLT-04, DPLT-15, DPLT-17): delete the first-haul section (it stays in planning/CATALOG.md#hauler), the 'week or two' estimate, 'Iteration 1', the seed-rebuild paragraph, the SCOPING paragraph, the `scattered`/`subject` bullets and the cited BUGS entries that are gone; replace the `.pNN.tar` sentence with a pointer to ../tooling/COLD.md; cut the cold-storage account to the goal plus that pointer (DTL-10); 'origin' -> 'source'; 'market' -> 'instrument at a venue' where an instrument is meant (Part 3 heading 'Categorise the instruments'); okx's 'drop' on 404 becomes one line pointing to CATALOG.md#prospector; the bot entry: 'out of scope until replay exists; no current plan' (DPLT-21); the tradebot-sim links become plain text. Archives line: 'Archives are mapped, order books included; what is left is in STOCKER.md' after verifying. Keep 'What this is building toward' and 'The simulator and the replay engine are different beasts'. DCAT-23 is DEFERRED: keep the 'data we do not want' paragraph (owner decides whether it is solved) and remove only its dead anchor and link.\n2. Incoming plan content (you write it; the source group deletes its copy; read sources at the baseline commit):\n - docs/DATA_PIPELINE.md (entry deletes): Replay; 'Origins arrive one at a time'; WebSocket and REST collection status -> ROADMAP.md, in the right Part.\n - docs/services/UI.md (you delete it): the time-machine modes, 'widgets are pure consumers', the hook/channel contract and the replay switch -> new docs/planning/UI.md, venue-neutral, no 'current state', no claims about files that exist. The stub's present state is written by platform-infra in services/_stub/ui/README.md; link it.\n - docs/services/PROSPECTOR.md (prospector-doc deletes): the migration policy's 'until a second developer / production deployment ... frozen' clause (PRC-07, DXC-21; also cut from migrations/index.ts by prospector-satellites); the OVERDUE_DAYS 'encode when a file is expected' proposal and the plan text in Known gaps (DPR2-11); gate's probingLag value question (DPR1-25) -> CATALOG.md#prospector. Make sure an entry exists there for removing okx's temporary ruleOnFailure 'drop' on 404 (DPR2-04 and ROADMAP point to it).\n - STOCKER docs (stocker deletes): the list of series entries with no decoded file (DSTK-05); verify a monthly okx fundingrates file and add a fixture (DSTK-12); okx 2021-10 perp trades published twice, with the options (DSTK-13); the margin 'stopgap until instrument metadata says it' (DSTK-18; check it is not already there); the unproduced `settlement` table if it is still in tables.ts (DSTK-07) -> STOCKER.md.\n - cold docs (tooling deletes): COLD-CATALOG.md's 'Not built' design (DTL-14, DXC-21); the audit ideas not rebuilt from the deleted legacy/audit.ts (months with a gap between them; the one-page per-venue report), each naming the last commit where it existed (`git log -1 --format=%H -- dev/tooling/src/tools/cold/legacy/audit.ts`) (TCL-14, DTL-02, DTL-11, DXC-30) -> COLD.md.\n - venue docs: OKX.md's planned re-walk (DVEN-13, venues-a deletes) and BINANCE.md L59-63 (DVEN-16, venues-b deletes) -> CATALOG.md; GATE.md L430-436, the SUN_USDT REST item and sweep proposal (DVEN-17, venues-b deletes) -> REST.md under Gate.\n - services/hoarder (messaging-vault deletes): an intent to collect Binance futures, one line in ROADMAP's WebSocket part, only if the source states such an intent (DCOL-14, DVEN-25).\n3. planning/COLD.md (DXC-06, DPLT-06, DTL-02, TCL-14, TCL-19): push, evict, pull and audit exist for both trees (one pointer to docs/tooling/COLD.md); no legacy/docs path, no 'as designed' clause; delete the landed items (audit, pull archives, evict against a partly-away vault); keep 'a partition the catalog withdraws entirely stays in its tar'; keep the 'first real run' items (and 'audit against real Mega') unless evidence shows they ran.\n4. planning/CATALOG.md (DXC-07, DCAT-20, DCOL-25, DSTK-06): delete 'Moving stocker onto the catalog is STOCKER.md' and Hauler item 4; merge the duplicated backup note; 'are retried now' -> 'are retried'; Hauler item 1 reduced to its action without the dated measurements (delete if done); lines 60-62 reduced to what is open; leave Hauler items 2-3 and the database note unless verified done. Name and scope stay (DCAT-23 deferred).\n5. planning/BUGS.md (DXC-07, DPLT-18, DPLT-19, DCOL-25): delete the 'audit's month counts' entry (facts store, legacy tool); bitget era entry: one count per case (the 2026-10-08 figures), both curl checks kept. Venue facts it relies on are BITGET.md's (venues-a).\n6. planning/STOCKER.md (DSTK-06): the single open-work list for stocker; 'The vault's `symbol` column holds the venue's own string' (no `symbol=` level); margining becomes one pointer to CATALOG.md#instruments-as-an-entity; the bybit `amount` question stays.\n7. planning/REST.md: keep (DXC-17 / DVEN-18 deferred; DPLT-12 not done). Only add the gate item above and fix broken links.\n8. archived/ stays (DPLT-24 deferred); archived/PLAN.md: unlink EXECUTOR.md, plain text '(never written)' (DXC-20). mental-model.html stays where it is: DPLT-21 asks to archive it, but the consistency review rejected that (F29: the owner kept it deliberately); report it as an owner question.\n9. docs/services/UI.md: delete once planning/UI.md is written (DXC-15)."
+  },
+  {
+   "name": "venues-a",
+   "files": [
+    "docs/venues/OKX.md",
+    "docs/venues/BITGET.md",
+    "docs/venues/BITGET-SEED.md"
+   ],
+   "items": [
+    "DVEN-05",
+    "DVEN-06",
+    "DVEN-07",
+    "DVEN-08",
+    "DVEN-09",
+    "DVEN-13",
+    "DVEN-15",
+    "DVEN-19",
+    "DVEN-20",
+    "DVEN-24",
+    "DXC-18",
+    "DPLT-19"
+   ],
+   "depends_on_code": [],
+   "instructions": "Venue docs describe the venue only (DXC-08, owned by venues-b, applies here too): never name a service of this repo, an adapter hook (accepts, tagOf, probingLag, ruleOnFailure...), a seed, this repo's catalog, stocker, spill, or a source file; no comparisons with other venues (DVEN-28 OKX/BITGET parts); dated measurements are evidence (keep the date), never dated status or plans ('our fault', 'the first walk', 'in a few weeks'). Do not reorder into a template (DVEN-29 deferred) and do not move REST facts between docs (DXC-17 / DVEN-18 deferred): REST sections get accuracy fixes only. Done when `grep -nE 'prospector|hauler|stocker|adapter|seed|accepts|tagOf|spill|services/'` finds only deliberate pointers.\nOKX.md: DVEN-13 (mechanical steps first, then the rewrites; the planned re-walk is cut, planning writes it), DVEN-05, DVEN-06, DVEN-19, DVEN-20 = DXC-18 (the ETag case as a venue fact, no code links), DVEN-24 (one home for the archive index; the seeds README sentence is prospector-satellites'), DVEN-04's OKX part (drop 'a second base' and 'Nothing implements that yet'), DVEN-26's OKX anchor (#ranges-and-why-the-monthly-sweep-is-how-to-get-them, or remove the link). Incoming from PROSPECTOR.md (prospector-doc deletes): okx's limit 'known only from below' into the pacing table (DPR2-20); okx's publication delay (p50/p99, measurement date and window) into a new '### Publication' under Archives (DPR1-22, DVEN-11). Outgoing: anything still true about how this repo treats okx (bucket series, preopen, pacing, RATES_START) is prospector-doc's to write under PROSPECTOR.md#okx; delete it here. Keep the heading 'Swap trades for 2021-10 list every trade twice' (stocker links it).\nBITGET.md: DVEN-07 (delete L656-713 and the 'These map to the catalog's refusal' sentence; prospector-doc writes discovery and refusals under PROSPECTOR.md#bitget; keep the listed venue facts), DVEN-08 (delete 'Building the seed' and 'Why the seed states shapes rather than sightings' after moving the measured index facts under the download-index subsection), DVEN-09 + DPLT-19 (the era-1/era-2 correction; one '### Publication' subsection), DVEN-15 (venue-fact rewrites and deletions; the transforms, the ten depth spellings and the generated-key uniqueness rule go to the seeds README bitget subsection, which prospector-satellites writes), DVEN-28's BITGET parts, DSTK-09's BITGET.md:80 stocker sentence (stocker makes sure STOCKER-PARTITIONS holds the back-spill handling). Incoming from BITGET-SEED.md (DVEN-02 step 6): the index-offered keys that 403 (BLZ/USDT, WAVES/USDT, 1,113 files) and the index going quiet on recent days, if BITGET.md lacks them.\nBITGET-SEED.md: delete (no inbound links; prospector-satellites writes its still-true content into the seeds README)."
+  },
+  {
+   "name": "venues-b",
+   "files": [
+    "docs/venues/BINANCE.md",
+    "docs/venues/BYBIT.md",
+    "docs/venues/GATE.md",
+    "docs/venues/HTX.md",
+    "docs/venues/KUCOIN.md",
+    "docs/venues/KRAKEN.md",
+    "docs/REST.md"
+   ],
+   "items": [
+    "DXC-08",
+    "DXC-28",
+    "DXC-29",
+    "DVEN-01",
+    "DVEN-03",
+    "DVEN-04",
+    "DVEN-10",
+    "DVEN-11",
+    "DVEN-12",
+    "DVEN-14",
+    "DVEN-16",
+    "DVEN-17",
+    "DVEN-21",
+    "DVEN-22",
+    "DVEN-23",
+    "DVEN-27",
+    "DVEN-28",
+    "prospector-catalog:PRC-15"
+   ],
+   "depends_on_code": [],
+   "instructions": "Same venue rules as venues-a (you own DXC-08 as a whole; venues-a applies it to OKX and BITGET). KUCOIN.md is the clean reference: only additions. docs/REST.md stays where it is (DXC-17 / DVEN-18 deferred): accuracy fixes only, no merging; the bounded 'merge the two listing sections' step of DVEN-18 is NOT done. No template reorder (DVEN-29).\nPer doc: BINANCE (DVEN-01 = PRC-15: the bookTicker/liquidationSnapshot endings as a small dated table, re-check UM liquidationSnapshot first, pattern.csv untouched; DVEN-04, -16, -23, -27, -28 parts; DXC-28 '### Spot timestamps change unit in 2025-01' under Archives, venue fact only, aggregated trades only after checking a file; DVEN-11 header facts; DVEN-25's line 'Verified live on 2026-07-26'); BYBIT (DVEN-03, -12, -23, -28 parts; DVEN-11 RPI columns; bare root keys from DPR1-10); GATE (DVEN-17, -22, DVEN-04 part; DPR1-10: add the seven-tree allow-list, the futures_btc rule and what the exclusion data covers as venue facts; PRC-07 wants the 2024-07..12 candlestick month-directory misfiling and the 2022-11-30 hour-23 book files documented here); HTX (DVEN-10, -14, -21, DVEN-04 part, -28 parts; the data/ last-write date as a venue fact, PRC-07; the 2026-02-01 overlap and remark.txt files from DPR1-10); KUCOIN (DVEN-11 file-format facts; futures 1d five-of-six fields from DPR1-10); KRAKEN.md (create, DXC-29, DVEN-11 step 6): only '## WebSocket' plus a one-line scope note that only the WebSocket API was examined; endpoint wss://ws.kraken.com/v2, frame shapes, status on connect, heartbeat, subscribe/ack, rejection of unknown channels, `BTC/USD` symbols, written from services/hoarder/src/venues/kraken.ts, the hoarder README and services/hoarder/tests/venues-protocols.test.ts as venue facts; no claim about archives.\nIncoming (sources delete their copy): from PROSPECTOR.md (prospector-doc): each venue's measured publication delay -> '### Publication' under Archives (p50/p99 hours from the start of the day, measurement date and window) (DPR1-22, DVEN-11); the exclusion reasoning facts listed above (DPR1-10); venue measurements and per-venue concurrency figures (DPR2-10, DPR2-20) if missing; gate's missing first hour only if you can establish it (DPR2-23). From STOCKER docs (stocker): the ms -> us change (DXC-28) and the measured evidence for gate klines, binance liquidations, bybit MT4 and other 'settled from rows' facts (DSTK-09) where missing, as venue facts. From services/hoarder (messaging-vault): Kraken facts (above); Binance WebSocket protocol traps: subscriptions not validated, acks without the channel name (HOA-13).\nOutgoing (you delete; the destination writes): to PROSPECTOR.md#gate: L193-198 tradfi handling, L215-265, L320-323, L348, L350-357 (DVEN-17); to #htx: the take-or-refuse reasoning L318-349, L433-453 and L447-453 'the preamble states the tree's end' (DVEN-10, DVEN-21); to #bybit: adapter rate/limiter/accepts mentions (DVEN-03, DXC-08); to #binance: categoryOf/preamble handling, survey-root rule, accepts refusals and costs, the happy-eyeballs note (DVEN-16, DVEN-28); to planning: BINANCE L59-63 -> planning/CATALOG.md, GATE L430-436 -> planning/REST.md (keep the venue fact that 2021-08/09 answer 404); to tooling: BINANCE L324-332 (cold-storage state) -> COLD.md only if true, else just delete; stocker sentences in GATE (L388-391, L442, L447-448, L451) and HTX's spill remark -> stocker keeps the handling in STOCKER-PARTITIONS."
+  },
+  {
+   "name": "prospector-doc",
+   "files": [
+    "docs/services/PROSPECTOR.md"
+   ],
+   "items": [
+    "DPR1-01",
+    "DPR1-03",
+    "DPR1-04",
+    "DPR1-05",
+    "DPR1-06",
+    "DPR1-09",
+    "DPR1-10",
+    "DPR1-11",
+    "DPR1-13",
+    "DPR1-14",
+    "DPR1-15",
+    "DPR1-16",
+    "DPR1-17",
+    "DPR1-18",
+    "DPR1-19",
+    "DPR1-21",
+    "DPR1-22",
+    "DPR1-23",
+    "DPR1-25",
+    "DPR1-26",
+    "DPR2-01",
+    "DPR2-02",
+    "DPR2-03",
+    "DPR2-04",
+    "DPR2-05",
+    "DPR2-06",
+    "DPR2-07",
+    "DPR2-08",
+    "DPR2-09",
+    "DPR2-10",
+    "DPR2-11",
+    "DPR2-12",
+    "DPR2-14",
+    "DPR2-15",
+    "DPR2-16",
+    "DPR2-18",
+    "DPR2-19",
+    "DPR2-20",
+    "DPR2-21",
+    "DPR2-22",
+    "DPR2-23",
+    "DPR2-24",
+    "DPR2-25",
+    "DXC-19",
+    "DXC-21",
+    "DVEN-26"
+   ],
+   "depends_on_code": [
+    "services/prospector",
+    "packages/netgate"
+   ],
+   "instructions": "One file, one writer; schedule after services/prospector settles (prospector-walk commits are still landing: e.g. PRW-08 'bad schedule exits 78', PRW-20/21 descent and HEAD changes, PRW-12 worker respawn). Keep PROSPECTOR.md one file: the split into overview / SERIES / TRANSPORT is DPR2-13 (DEFERRED). Within the file, give each subject one home exactly where the IMPLEMENT items say (reconciliation in 'What a completed update pass is worth' DPR2-01; the preamble in 'The preamble: asking the venue what it lists' DPR2-02; one state-flow section, merging 180-198 and 362-393, DPR1-12 part 4; walk cadence only in 'When an update is a walk' DPR1-17) and leave one-line pointers in place of second copies; do not apply DPR2-13's wider pointer list beyond that.\nOrder: (1) correctness: DPR2-01, -02, -03, -04, -05, -06, DPR1-01, -03, -05, -16, -19; (2) the history/tense sweep over the whole file: DPR1-13, DPR2-12, DXC-21, DPR1-23; (3) framing: DPR1-14, DPR2-16, DPR1-04 (prospector writes the catalog database, the catalog serves it); (4) the rest; (5) anchors (DVEN-26, the GATE anchors) and a link check.\nStorage (#storage) is the one home of who writes which table (DXC-01, DPR2-07, SHR-03): count CREATE TABLE in schema.ts; lens and lens_member are stored through the private API. The API: add '### Lenses' (DPR2-08) and move the Storage lens paragraph there; the Status table gains `completedEver` (whether a pass has ever finished on every host; DCAT-08, catalog cuts it from CATALOG-UI.md); add the one-unfinished-run rule cut from VOCABULARY's Run (DPLT-13). Configuration: services/prospector/README.md holds the env table (prospector-satellites, DPR1-12); keep here the reasoning ('On pace and parallelism', the network gate) and point to the README for names and defaults; the PROSPECTOR_VENUES default (DPR2-15) and the ~1,250 HTTP/1.1 ceiling (DPR2-22) are stated in the README table, the reasoning here. Adding a venue and the source map: a pointer to the README (DPR1-06). Seed format: cut 233-251 to a two-line pointer to the seeds README (DPR1-12). Walk-schedule example `kucoin: 1,10,20` (DXC-19); what a bad schedule does today (verify PRW-08).\nNew '## Venue by venue' with '### binance' ... '### okx' (promised anchors): per venue, short, how this service handles that venue's facts, pointing to the venue doc for the facts. Fold in the per-venue exclusion tables as one line each pointing at the venue doc and the adapter's accepts docblock (DPR1-10; keep the three-tier model and the `.csv` reasoning; 'Four suffixes'). Incoming (venue groups delete their copies; read at the baseline commit): bitget: discovery reads v3 for SPOT, USDT-/COIN-/USDC-FUTURES only, marketOf refuses non-crypto as tradfi, marginToken from the category, v2-only instruments not discovered, and BITGET.md 'What this catalog refuses' (L656-713, L957-959) (DVEN-07); bitget's declared concurrency 500 at ~1843 (DVEN-15); gate: GATE.md L193-198, L215-265, L320-323, L348, L350-357 (misfiled.ts closed list, literal-month shapes seeded retired, the 2026-09-27 probe-cost reason) merged with the existing gate text (DVEN-17, DPR2-23); htx: the take-or-refuse reasoning (HTX.md L318-349, L433-453; refused) and data/'s end as catalog state (migration 002 retired_at, accepts/MIGRATED) (DVEN-10, DVEN-21); bybit: pacing rationale (bucket walked at the declared rate; the edge is never used for listing) (DVEN-03); binance: categoryOf/preamble handling, the survey-root rule, accepts refusals with their costs, and the Node happy-eyeballs/retry note in the HTTP section (DVEN-16, DVEN-28); okx: whatever OKX.md said of prospector that is still true (DVEN-05).\nOutgoing (you delete; destination writes): to venue docs: per-venue publication delays (keep the probingLag rule, the (p99 - H)/24 reasoning and a per-venue probingLag table; DPR1-22, DVEN-11); the exclusion reasoning facts (htx 2026-02-01 overlap, htx remark.txt, kucoin futures 1d, bybit bare root keys) (DPR1-10); the venue figures at ~1507-1510 and ~1573-1575 and okx's 'known only from below' Known-gaps entry (DPR2-20); dated per-venue concurrency arithmetic (DPR2-10). To planning: the migration policy's future clause (keep present facts plus a pointer to the migrations/index.ts docblock; DXC-21, DPR2-25), the OVERDUE_DAYS proposals (DPR2-11), gate's probingLag question (DPR1-25).\nTerminology: DPR1-11 (scope vs partition, run rows vs job, revision table) and DPR2-21 (preamble vs reconciliation; 'the serial write queue'); do not add these to VOCABULARY. CATALOG.md / CATALOG-API.md / venue docs only as pointers."
+  },
+  {
+   "name": "prospector-satellites",
+   "files": [
+    "services/prospector/README.md",
+    "services/prospector/src/database/migrations/seeds/README.md",
+    "services/prospector/src/types.ts",
+    "services/prospector/src/survey.ts",
+    "services/prospector/src/sync.ts",
+    "services/prospector/src/schedule.ts",
+    "services/prospector/src/api/collector.ts",
+    "services/prospector/src/collector.ts",
+    "services/prospector/src/config.ts",
+    "services/prospector/src/pace.ts",
+    "services/prospector/src/probe.ts",
+    "services/prospector/src/dates.ts",
+    "services/prospector/src/deliver.ts",
+    "services/prospector/src/adapters/okx.ts",
+    "services/prospector/src/adapters/okx/instruments.ts",
+    "services/prospector/src/catalog/series.ts",
+    "services/prospector/src/database/schema.ts",
+    "services/prospector/src/database/migrations/index.ts",
+    "services/prospector/src/database/migrations/006-binance.ts",
+    "services/prospector/src/database/migrations/seeds/seed.ts",
+    "services/prospector/docker/compose.yml"
+   ],
+   "items": [
+    "DPR1-02",
+    "DPR1-07",
+    "DPR1-08",
+    "DPR1-12",
+    "DPR1-20",
+    "DPR1-24",
+    "DPR2-17",
+    "DXC-09",
+    "DVEN-02",
+    "prospector-catalog:PRC-08"
+   ],
+   "depends_on_code": [
+    "services/prospector"
+   ],
+   "instructions": "Schedule after services/prospector settles. Code units already rewrote several of these docblocks (f820629, db6b55c, 47ef8b1): verify each before editing.\nservices/prospector/README.md (DPR1-12 part 1): one-screen operator page. What it is (2-3 lines, prospector's own terms, it is the catalog database's only writer: DXC-01 README part); the env table, one home (PROSPECTOR_VENUES: empty = every registered venue, comma-separated subset of binance, bitget, bybit, gate, htx, kucoin, okx, unknown name fails startup, starts nothing on its own (DPR2-15); PROSPECTOR_CONCURRENCY with 'keep below ~1,250 over HTTP/1.1; not enforced' (DPR2-22); CATALOG_TOKEN; LOG_LEVEL; whatever config.ts reads today); the /data/catalog mount; ports (8080 private API with no host port, 3000 health: DPR1-21); the walk schedule with `kucoin: 1,10,20`, only a listable venue (not okx or bitget), and what a bad schedule does today (DPR1-02; verify PRW-08); adding a venue, one home (adapter in src/adapters/, a line in src/venues.ts, a row in VENUES in migrations/001-core.ts, a scanner only for a new platform; DPR1-06, DPR1-21); DPR1-09 (new dataset found by descent, lands in `unreadable`), DPR1-17 and DPR1-14 README parts; 'Deployed by: archives module'; link to PROSPECTOR.md. Delete 'Why it exists', 'What it does', 'Venues', 'What it does not do'.\nseeds/README.md (DXC-09, DPR1-07, -08, -24, PRC-08, DPR1-03 and DPR1-13 seeds parts, DVEN-24 step 5): the one home of the seed format and of research vs permanent seeds (DPR1-12 part 2). Two kinds of seed: series seeds (okx, bitget: pattern + series, plus transform for bitget) and retirement-only seeds (htx, gate, binance: pattern with retired_at); Layout matches `ls seeds`; real examples copied from the files; the slot list; the generic quoting rule; a seed states a floor and seed.ts stores tip = the period before it; first/last: sawFile only lowers first, reconcile resets both to what the file table holds; okx's index is not walked (pointer to docs/venues/OKX.md); no history, no per-venue enumeration of retired shapes.\nBitget subsection (DVEN-02, DXC-09; incoming from venues-a, who delete BITGET-SEED.md and BITGET.md's seed sections): written from BITGET-SEED.md and BITGET.md 'Building the seed', 'Why the seed states shapes rather than sightings', the eraName mechanics (L219-226) and the transforms / ten depth spellings / generated-key uniqueness rule (DVEN-15 step 3), read at the baseline commit, keeping only what seed.ts and the CSVs bear out: measured floors with the margins table, the series set as 'only what answered', the transform kinds, the rebuild procedure (getSymbolList crawl, then the getPublicDataV2 sweep), `last` measured on every series, SEEDED_AT, the multi-part chain (expandParts), discovery from v3 only (DVEN-07 step 5), the era-1/era-2 correction (DVEN-09 step 2, may point to planning/BUGS.md). No ruleOnSuccess history, no future tense; venue facts by pointer to docs/venues/BITGET.md.\nDocblocks (files you own; describe the code as it is): DPR1-20 (api/collector.ts, collector.ts), DPR2-17 (pace.ts, probe.ts, database/schema.ts, types.ts, dates.ts, okx/instruments.ts, catalog/series.ts, deliver.ts, okx.ts), DPR1-05 (types.ts:349-362, survey.ts:124-127), DPR1-09 and DPR1-16 (survey.ts, schema.ts run-kind comment), DPR1-03 (sync.ts:356 comment), DPR1-02 (schedule.ts yaml block), DPR1-07 / DPR1-24 / PRC-08 (seed.ts), DPR2-11 (dates.ts readers, probe.ts:209-210), DPR2-18 (series.ts:646-651), DPR2-25 and PRC-07 (migrations/index.ts: the editing policy lives only there, present tense, the 'second developer' future clause removed; planning writes it), DVEN-01 (006-binance.ts: pointer to docs/venues/BINANCE.md instead of restated dates), DVEN-03 (pace.ts:30-31 neutral note), DPLT-18 (config.ts:10-11 archivist sentence), DPR2-15 (docker/compose.yml orphaned HTTP/1.1 comment). Do not rename identifiers."
+  },
+  {
+   "name": "stocker",
+   "files": [
+    "docs/services/STOCKER.md",
+    "docs/services/STOCKER-PARTITIONS.md",
+    "services/stocker/README.md",
+    "modules/store/warehouse/README.md",
+    "modules/store/warehouse/.env.example",
+    "services/stocker/src/build.ts",
+    "services/stocker/src/schema/tables.ts",
+    "services/stocker/src/schema/series.ts",
+    "services/stocker/docker/compose.yml"
+   ],
+   "items": [
+    "DSTK-01",
+    "DSTK-02",
+    "DSTK-03",
+    "DSTK-04",
+    "DSTK-05",
+    "DSTK-07",
+    "DSTK-08",
+    "DSTK-09",
+    "DSTK-10",
+    "DSTK-11",
+    "DSTK-12",
+    "DSTK-13",
+    "DSTK-14",
+    "DSTK-15",
+    "DSTK-17",
+    "DSTK-18",
+    "DSTK-19",
+    "DSTK-20",
+    "DSTK-21",
+    "DSTK-22",
+    "DSTK-23",
+    "DSTK-24",
+    "DSTK-25",
+    "DSTK-26",
+    "DSTK-27",
+    "DSTK-28",
+    "DXC-04",
+    "stocker:STK-10"
+   ],
+   "depends_on_code": [
+    "services/stocker",
+    "modules/store/warehouse"
+   ],
+   "instructions": "The code changes DSTK-01 and DSTK-02 prescribe landed as STK-08 / STK-07 (a94a0ab, 4de4bba); STK-03/-05/-06/-16/-17/-18/-19 changed sides, ledger, extraction and offsets too: describe what is there now.\nHomes: STOCKER.md is the one home of stocker's design and of the canonical tables (DSTK-07: complete '## Canonical tables', columns in tables.ts order, `symbol` first, `margin` last where present, path levels; no `settlement` unless produced). STOCKER-PARTITIONS.md is the per-venue series mapping: handling only (column mapping, unit, zone, series options), with 'why: ../venues/<VENUE>.md' for the evidence (DSTK-09), its 'Canonical:' lines replaced by links to #canonical-tables, one marker 'unverified - no file decoded' (DSTK-05), plus DSTK-12, -13, -14, -21, -23. The README is the operator page (DSTK-08: storage contract of the vault root as a table, configuration incl. LOG_LEVEL, TZ and /health on :3000, extending with DSTK-24, development, 'Deployed by: warehouse module'; no 'What it does' or Layout block, or copy vault.ts exactly: DSTK-15).\nCorrectness: DSTK-01, -02, -03 = DXC-04 = STK-10 (no 'one file per instrument'), -04, -10, -11, -15 (every path level), -17 (stocker alone stocks the vault; a copy kept elsewhere records itself in backedup.csv; do not name cold), -18, -19, -22, -26, -27 ('### Providers': the catalog request and headers, retries, the archives layout; pointers to CATALOG-API.md and HAULER.md#the-layout-on-disk), -28. Tense: DSTK-20 (and DXC-21's STOCKER parts).\nTerminology: 'period' for stocker's time bucket (rename the heading 'Venues whose buckets do not cut at UTC midnight' and the links to it inside your files; DXC-10), 'vault slice' defined once in #path-convention (DSTK-25), 'Table' as VOCABULARY defines it.\nCross-group: backedup.csv's format has its home in COLD-VAULT.md#backedupcsv (tooling): describe only how stocker reads it and point there (DTL-04). Keep #the-ledger: COLD-EVICT/COLD-VAULT link it for the ledger marks (DTL-18). Venue facts leave your docs (venues-b writes them, you keep the handling and a link): the binance ms -> us change becomes 'unit inferred per value' plus a link to BINANCE.md#spot-timestamps-change-unit-in-2025-01 (DXC-28); measured evidence for gate klines, binance liquidations, bybit MT4 and similar (DSTK-09). Incoming handling for sentences the venue groups delete: GATE.md L388-391, L442, L447-451 (gate width refusal, empty gzips), BITGET.md:80 (bitget back spill), HTX's spill remark: make sure STOCKER-PARTITIONS states each. Plans leave for docs/planning/STOCKER.md (planning writes): the unverified-entries list (DSTK-05), okx monthly funding check (DSTK-12), okx 2021-10 doubled trades options (DSTK-13), the margin stopgap (DSTK-18), `settlement` (DSTK-07).\nDocblocks and comments you own: build.ts (429-431 concurrency comment and the docblock DSTK-02 relies on), schema/tables.ts:26-28 (margin per instrument), schema/series.ts:506-507 (DVEN-11 step 1), docker/compose.yml:39 (DSTK-11). modules/store/warehouse/README.md: verify against compose; nothing structural (DXC-32 deferred: no WAREHOUSE.md); its .env.example: comments on their own line (DPLT-02; INF commit 8bbba2f likely did it, verify)."
+  },
+  {
+   "name": "catalog",
+   "files": [
+    "docs/services/CATALOG.md",
+    "docs/services/CATALOG-UI.md",
+    "docs/modules/CATALOG-API.md",
+    "docs/modules/CATALOG-LENSES.md",
+    "services/catalog/README.md",
+    "services/catalog-ui/README.md",
+    "services/catalog-ui/web/views/Lenses.tsx",
+    "services/catalog-ui/web/views/Surveys.tsx",
+    "services/catalog-ui/src/api/routes.ts",
+    "services/catalog-ui/vite.config.ts",
+    "services/catalog/src/api/lenses.ts",
+    "services/catalog/src/reports.ts",
+    "services/catalog/src/prospector.ts",
+    "services/catalog/docker/compose.yml",
+    "shared/lenses/src/types.ts",
+    "shared/lenses/src/store.ts",
+    "shared/lenses/src/spans.ts"
+   ],
+   "items": [
+    "DCAT-01",
+    "DCAT-02",
+    "DCAT-03",
+    "DCAT-04",
+    "DCAT-06",
+    "DCAT-07",
+    "DCAT-08",
+    "DCAT-09",
+    "DCAT-10",
+    "DCAT-11",
+    "DCAT-12",
+    "DCAT-13",
+    "DCAT-14",
+    "DCAT-15",
+    "DCAT-16",
+    "DCAT-17",
+    "DCAT-18",
+    "DCAT-19",
+    "DCAT-21",
+    "DCAT-22",
+    "DXC-01",
+    "DXC-05",
+    "DXC-16",
+    "DXC-22",
+    "DXC-26",
+    "DXC-27",
+    "catalog-ui:CUI-01",
+    "catalog-ui:CUI-04",
+    "catalog-ui:CUI-06",
+    "catalog-ui:CUI-07",
+    "catalog-ui:CUI-11",
+    "shared:SHR-03"
+   ],
+   "depends_on_code": [
+    "services/catalog",
+    "services/catalog-ui",
+    "shared/lenses"
+   ],
+   "instructions": "Schedule after the catalog and catalog-ui code settles (at plan time the working tree held uncommitted changes under services/catalog and services/catalog-ui). CATALOG-API.md and CATALOG-LENSES.md stay in docs/modules/ (DXC-32 deferred); fix them in place and keep their anchors.\nHomes: CATALOG-LENSES.md = what a lens is (definition, what is refused, resolving, cost and progress, reading through a lens incl. that every figure under a lens is the lens's (DCAT-04) and the 5-minute lens-options hold (DCAT-15)). CATALOG-API.md = the wire contract: settled semantics live in its partitions part (DCAT-16); listings and the key grammar, plus the layout rationale moved in from HAULER.md (DCOL-09; archives-hauler cuts it): positional rather than key=value, the path for people and the filename for programs, `F` as a filesystem device, `@` sorting first, provenance held by the catalog, stated on the catalog's own terms; DCAT-10, -13, -14, DXC-26 examples; reporting points to PROSPECTOR.md#reports. CATALOG.md = the implementation (DXC-27/DCAT-11 shared package sentence, DCAT-12 retries, DCAT-15 caches, DCAT-03 abort as the connection the catalog sees, DCAT-22 no dated benchmarks). CATALOG-UI.md = the UI and its proxy only: the forwarded-route allowlist and diagram (CUI-01), what an abort guarantees (CUI-04), that status, content type and body bytes are preserved (CUI-11), CUI-06, CUI-07 (no history; prospector and venue internals become one-line pointers to PROSPECTOR.md or docs/venues; the stalled causes stated once), DXC-16/DCAT-06/-07 (editor choices Any, Only <form>, Prefer <form> for includes only, bundle labels 'per Instrument' and 'Market Bundles' as in Lenses.tsx; no instrument picker; semantics by pointer to CATALOG-LENSES#the-definition), DCAT-08 (prospector, not 'the catalog', is the source of /status; the every-host rule leaves for PROSPECTOR.md's Status table, which prospector-doc writes), DCAT-09, DCAT-21, DCAT-22.\nWho writes the lens table (DXC-01, DCAT-01, SHR-03): one sentence at each doc's depth (the catalog opens the database read-only; prospector stores lenses through its private API), pointing to PROSPECTOR.md#storage. Providers never explained by consumers (DXC-05, DCAT-02, DXC-22): delete the readiness paragraph and the 'never asked of the catalog' claim; rename or fold 'Who reads through one' into a provider-side statement ('Pending is the file's, not the lens's'); 'a lens never scopes collection' stays on the catalog's terms; the 'disjoint lens per downloader' advice is written into HAULER.md by archives-hauler; optional CATALOG-API:189 wording.\nTerminology (DXC-10): 'named selections' (also in the catalog-ui README; DCAT-07's 'named slices' wording is superseded), 'market-bundle file' in prose with the `buckets` field explained, letter folder `F`.\nREADMEs: services/catalog/README.md (DCAT-18 CATALOG_DB row and a pointer to CATALOG-API.md instead of the endpoint list; DXC-12: 'Set CATALOG_PORT wherever something on the host calls the catalog, e.g. `./tools cold`'; Deployed by: archives module); services/catalog-ui/README.md (DCAT-17 build and dev, one home; DCAT-07/DXC-22 lenses bullet; Deployed by: archives module).\nDocblocks and comments you own: catalog-ui web/views/Lenses.tsx (DCAT-06), web/views/Surveys.tsx (DCAT-08), src/api/routes.ts (DCAT-21, CUI-06), vite.config.ts (DCAT-17); catalog src/api/lenses.ts (DCAT-19), src/reports.ts and src/prospector.ts ('up to three attempts', DCAT-12), docker/compose.yml (DCAT-01 comment); shared/lenses src/types.ts, store.ts, spans.ts (DCAT-19, SHR-03; code commit f820308 may have done them). ARCHIVES.md's CUI-01 part is archives-hauler's."
+  },
+  {
+   "name": "archives-hauler",
+   "files": [
+    "docs/modules/ARCHIVES.md",
+    "modules/collect/archives/README.md",
+    "docs/services/HAULER.md",
+    "services/hauler/README.md",
+    "modules/collect/archives/.env.example",
+    "modules/collect/archives/compose.yml",
+    "services/hauler/docker/compose.yml",
+    "services/hauler/src/store.ts"
+   ],
+   "items": [
+    "DCOL-09",
+    "DCOL-10",
+    "DCOL-11",
+    "DCOL-12",
+    "DCOL-13",
+    "DCOL-22",
+    "DCOL-23",
+    "DXC-24",
+    "DXC-25",
+    "DXC-31",
+    "DPLT-10"
+   ],
+   "depends_on_code": [
+    "services/hauler",
+    "modules/collect/archives",
+    "services/prospector"
+   ],
+   "instructions": "Two docs cover the archives module today (DCOL-10): modules/collect/archives/README.md becomes the operational page (services table, `tb` commands, the full variable table moved from ARCHIVES.md incl. HAULER_MIN_FREE_GB, the empty-token paragraph, CATALOG_DIR setup with mkdir/chown, the fresh-catalog note, the survey curl examples and enrolment semantics stated once (DCOL-11; verify against prospector's index.ts, which is still changing)); docs/modules/ARCHIVES.md becomes the design (flow diagram, the four services, 'Why it is split this way', enrolment and token semantics in one sentence each, 'What it is for'), pointing at the README for running it. In ARCHIVES.md also: DXC-01's sentence (a lens is a consumer's choice, defined and checked through the catalog; prospector stores it like every other row; the catalog opens the database read-only), CUI-01's part (nothing implies CATALOG_TOKEN protects an exposed catalog-ui port; the port binding question is CUI-21, deferred), DXC-12's CATALOG_PORT note, 'named selections' (DXC-10). README: DXC-31 pointer to services/<name>/README.md for variables.\nHAULER.md: 'The layout on disk' becomes a short section keeping its heading/anchor (stocker links it): hauler writes each listed object at <archives>/<key> and derives no name; one example path; the grammar is in CATALOG-API.md#listings (DCOL-09). The rationale worth keeping is written into CATALOG-API.md by catalog; delete it here, and drop the vault/query-engine sentence, symbol measurement, inode figures and venue part counts. Also DCOL-22, DCOL-23 (and DXC-21's HAULER sentence), DVEN-04's HAULER part (verify alternative_hosts against hosts.ts and migration 001), `FL` -> `F` and 'market bundle (`@`)' (DXC-10). Add how hauler uses a lens, including the advice that several downloaders split work by disjoint lenses (incoming from CATALOG-LENSES.md, DCAT-02, DXC-05). Hauler code changed a lot since the review (HAU-01..24): verify timing, budget, 403/404 rules and stop behaviour.\nservices/hauler/README.md: DXC-24 = DCOL-12 (a refusal takes the refusing address out of rotation; the catalog forwards the report to prospector, which rules), DCOL-22 sentence, 'Deployed by: archives module'.\nComments you own: services/hauler/docker/compose.yml (DCOL-13), services/hauler/src/store.ts docblock (DCOL-23), modules/collect/archives/compose.yml (DPLT-18: the commented archivist include and its comment), modules/collect/archives/.env.example (DXC-25 = DPLT-10: CATALOG_DIR is required; the venue list includes bitget (DPR2-15); DXC-12 / DPLT-11: drop 'which is the right answer' and say to set CATALOG_PORT where something on the host must reach the catalog, without naming the tool; DCAT-21 'another machine' wording; comments on their own line (DPLT-02); infra commit 8bbba2f already rewrote this file, so verify first). DPLT-09's DATA_DIR guard in compose is a config change: report, do not make it."
+  },
+  {
+   "name": "messaging-vault",
+   "files": [
+    "docs/services/ROUTER.md",
+    "docs/services/VAULT.md",
+    "services/router/README.md",
+    "services/pipe/README.md",
+    "services/hoarder/README.md",
+    "services/vault/README.md",
+    "shared/utils/README.md",
+    "services/hoarder/src/messages.ts",
+    "services/hoarder/src/subscriptions.ts",
+    "services/hoarder/src/websocket.ts",
+    "services/hoarder/src/venues/binance.ts",
+    "services/hoarder/src/venues/okx.ts",
+    "services/hoarder/src/venues/kraken.ts",
+    "services/hoarder/tests/venues-protocols.test.ts",
+    "services/vault/src/server/routes.ts"
+   ],
+   "items": [
+    "DCOL-01",
+    "DCOL-02",
+    "DCOL-03",
+    "DCOL-04",
+    "DCOL-05",
+    "DCOL-06",
+    "DCOL-07",
+    "DCOL-08",
+    "DCOL-14",
+    "DCOL-15",
+    "DCOL-16",
+    "DCOL-18",
+    "DCOL-19",
+    "DCOL-20",
+    "DCOL-21",
+    "DCOL-24",
+    "DXC-23",
+    "DVEN-25",
+    "hoarder:HOA-12",
+    "hoarder:HOA-13"
+   ],
+   "depends_on_code": [
+    "services/vault",
+    "services/router",
+    "services/pipe",
+    "services/hoarder",
+    "shared/utils",
+    "packages/rabbitmq"
+   ],
+   "instructions": "Schedule after the vault and router-pipe code units finish (VLT and RTP commits are still landing; RTP-01 changed how destination queues are bound, which decides DCOL-02's wording; DCOL-04/-06's code parts depend on vault fixes). Describe the code as it is then.\nDEFERRED, so keep the current arrangement: DCOL-26 (ROUTER.md stays in docs/services; router, pipe and hoarder READMEs keep their shape) and DCOL-17 / DPLT-25 (VAULT.md and services/vault keep their name; say 'the vault service' wherever it could be confused with the Parquet vault, DXC-10; do not rewrite the courier/journalist comments in vault code, which belong to DCOL-17).\nRule grammar: create shared/utils/README.md (a short package README; its '## Rule grammar' section is the single home of the grammar, written from shared/utils/src/routes.ts: item forms, `&`, `|`, whitespace, types and defaults, name charset, modifiers, parse errors) (DCOL-08; decision: a package README is used although DXC-32 on where shared-package docs live is open; if the owner picks docs/shared/, it moves). ROUTER.md keeps only router specifics (DCOL-02, -15, -16 with a Backpressure subsection and QUEUE_URL, -18, -19, -20 neutral names) and points to the grammar; pipe README keeps pipe restrictions (DCOL-07, -20, DXC-22 neutral names) and points there; router README points at ROUTER.md's table. Adding ROUTER_MAX_READY / ROUTER_WATCH_QUEUES to the router compose (DCOL-16) is config: check, report, do not change.\nHoarder README: byte-faithful relay (DCOL-01: HOA-02 landed as c36a21c, verify), status and the `hoarder` topic exchange (DCOL-21), Binance futures not collected with a pointer to docs/venues/BINANCE.md (DCOL-14, HOA-13; no statement of intent here, planning writes one only if stated), HOA-12 behaviour per the landed HOA fixes; move out the Kraken venue facts (DXC-29) and Binance protocol traps (HOA-13), which venues-b writes into KRAKEN.md / BINANCE.md; keep how hoarder correlates acks; point at KRAKEN.md; 'Deployed by: no module'.\nVault: VAULT.md DCOL-03 (zipper-based write safety and quarantine as they are now after cc985eb and the other VLT commits), -04, -05 (port 8000, health 3000, VAULT_COMPRESSION_LEVEL), -06 (listings, PUT, errors, 429, /stats), -24; services/vault/README.md (DCOL-05, DXC-23 VAULT_COMPRESSION_LEVEL, data dir, 'Deployed by: no module'). The root .env.example VAULT_URL line is platform-infra's.\nDXC-23: every services/*/README.md gets a 'Deployed by' line; write yours (router, pipe, hoarder, vault: 'Deployed by: no module'); the other README owners write theirs.\nDocblocks you own: hoarder src/messages.ts, subscriptions.ts, websocket.ts, venues/binance.ts (DVEN-25, HOA-13: pointer to docs/venues/BINANCE.md by file), venues/okx.ts, venues/kraken.ts (trim to a pointer at docs/venues/KRAKEN.md), tests/venues-protocols.test.ts (HOA-12; code commit b3c85b6 may have done these); vault src/server/routes.ts:10-12 (DCOL-24)."
+  },
+  {
+   "name": "platform-infra",
+   "files": [
+    "docker/README.md",
+    "modules/infra/README.md",
+    "services/rabbitmq/README.md",
+    "services/redis/README.md",
+    "services/_stub/ui/README.md",
+    ".env.example",
+    "modules/infra/local/compose.yml",
+    "modules/infra/store/compose.yml",
+    "modules/infra/market/compose.yml",
+    "modules/infra/bootcamp/compose.yml",
+    "modules/infra/shuttle/compose.yml"
+   ],
+   "items": [
+    "DPLT-01",
+    "DPLT-02",
+    "DPLT-07",
+    "DPLT-08",
+    "DPLT-09",
+    "DPLT-14",
+    "DPLT-22",
+    "DXC-13",
+    "DXC-14",
+    "DCAT-05",
+    "stub-ui:SUI-02",
+    "infra:INF-12"
+   ],
+   "depends_on_code": [
+    "docker",
+    "modules/infra",
+    "services/rabbitmq",
+    "services/redis",
+    "services/_stub/ui"
+   ],
+   "instructions": "Infra units changed these files since the review (96bb544 prod image, e8d0ebd loopback ports and required credentials, e8c4612 unique compose projects / market cache / compose comments, 8bbba2f env examples, b8f0ca6 ./tb network): read the files, not the review.\ndocker/README.md (DXC-14 = DPLT-07 = INF-12, DPLT-01): rewrite from the four Dockerfiles and two entrypoints: APP_ENV selects docker/${APP_ENV}.node.Dockerfile with the repo root as context; build args SERVICE_NAME and NODE_MEMORY_MB; the prod image as it is after INF-01/05/11 (entry point dist/src/index.js); the dev image (runtime only, /live mount, runs what the host's last `pnpm build` produced); data dirs owned by uid 1000; the real .dockerignore; the python pair in one line (DPLT-26 deferred). No npm, no 'minimal image', no consumer services named.\nmodules/infra/README.md (DXC-13, DPLT-08): one table, pack x {queue, queue-rt, cache} with the actual service names and hostnames from the five compose files; the root .env.example variables they read; no DB_*, no nonexistent modules, no per-pack anchors, no replay/REST claims. Describe each pack only by what it defines (DXC-22 over DPLT-08's consumer list). DPLT-23 is deferred: document the packs as they are. Header comments of the five compose files (DXC-13 step 3): verify, fix comment text only.\nservices/rabbitmq/README.md (DXC-13, DPLT-14) and services/redis/README.md (DXC-13, DPLT-22): each on its own terms (image and version, credentials, ports and what empty means, config files or volume, service name); no consumers, no fabricated snippets, no `tb up infra`; pack hostnames by pointer to modules/infra/README.md; each with a 'Deployed by' line naming the packs.\nRoot .env.example (DPLT-02, DPLT-09, DCOL-05 VAULT_URL): comments on their own line; DATA_DIR marked required; correct role notes for queue, queue-rt and cache; delete the REGISTRY section, QUEUE_RT_URL and VAULT_URL only after grep shows nothing reads them (otherwise correct them: vault is on port 8000); mark the vault-service section as services/vault's, which no module deploys. Guarding DATA_DIR in compose is config: report only.\nservices/_stub/ui/README.md (DXC-15, DCAT-05, SUI-02): present tense; a BitMEX-era React/Vite stub that no module deploys, wired against BitMEX REST/WS and the retired digger; what exists (the data layer: BitmexClient over WsClient, EnvProvider, DataProvider; the widget hooks; which widgets render mockData.ts; grid layout persistence), the variables vite.config.ts and compose actually read, the real start commands (no `tb up gui/bitmex`); 'Deployed by: no module'; the intended design by pointer to docs/planning/UI.md (planning creates it; docs/services/UI.md is deleted, link nothing there). Decision: SUI-02 asked to keep a rewritten docs/services/UI.md; DXC-15 / DCAT-05 delete it, so the current-state description lives here instead."
+  },
+  {
+   "name": "tooling",
+   "files": [
+    "dev/tooling/README.md",
+    "docs/tooling/COLD.md",
+    "docs/tooling/COLD-PUSH.md",
+    "docs/tooling/COLD-EVICT.md",
+    "docs/tooling/COLD-PULL.md",
+    "docs/tooling/COLD-VAULT.md",
+    "docs/tooling/COLD-CATALOG.md",
+    "docs/tooling/COLD-AUDIT.md",
+    "dev/tooling/.env.example",
+    "dev/tooling/src/commands/cold.ts",
+    "dev/tooling/src/tools/cold/push/archives/index.ts",
+    "dev/tooling/src/tools/cold/lock.ts",
+    "dev/tooling/src/tools/cold/shared/vault/fetch.ts",
+    "dev/tooling/src/tools/cold/pull/archives/bring.ts"
+   ],
+   "items": [
+    "DTL-01",
+    "DTL-03",
+    "DTL-04",
+    "DTL-05",
+    "DTL-06",
+    "DTL-07",
+    "DTL-08",
+    "DTL-09",
+    "DTL-11",
+    "DTL-12",
+    "DTL-13",
+    "DTL-14",
+    "DTL-15",
+    "DTL-16",
+    "DTL-17",
+    "DTL-18",
+    "DTL-19",
+    "DXC-11",
+    "DXC-12",
+    "DXC-30",
+    "DPLT-11",
+    "tooling-cold:TCL-14",
+    "tooling-cold:TCL-05",
+    "tooling-cold:TCL-19"
+   ],
+   "depends_on_code": [
+    "dev/tooling"
+   ],
+   "instructions": "Both tooling code units landed many changes (tooling-cold TCL-01..29 incl. deleting legacy/ in 7608faa; tooling-other TOT-01..20: rabbit fetch/watch are now non-destructive (04474dc), -e now overrides dev/tooling/.env (18a016d), --verbose dropped (cd79663), RabbitMQ discovery redone (0ac2f5b)). The review's statements about the CLI are largely stale: document the code.\nKeep the cold doc set as it is (DTL-20 deferred: no per-tree split, no new docs/tooling/README.md). COLD.md becomes the home of what the commands share: '## Configuration' (DTL-05, DXC-11, DXC-12 / DPLT-11: every variable config.ts reads with its real default and layer, incl. the CATALOG_URL fallback and that an empty CATALOG_PORT in the archives module means docker picks a random port); '## The record' (DTL-12; every table in record/schema.ts, one line each; moved from COLD-VAULT.md:168-176); '## How Mega is trusted' (DTL-13; the three copies become one sentence plus a link each); 'Where things live' completed with paths and locks, and which commands take no lock (DTL-12); Origins as the CLI argument, 'tree' in prose (DXC-10); watching (DTL-15, TCL-19); 'The code' corrected and without the legacy row (DTL-17, TCL-14). COLD-PUSH/EVICT/PULL/VAULT/CATALOG/AUDIT point to those sections instead of restating them.\nPer doc: DTL-03 (what removes, and whether it goes to the trash, per TCL-05 now), DTL-04 (no 'nothing in a container reads it'; COLD-VAULT.md#backedupcsv is the home of backedup.csv's format; stocker links it; keep the anchor), DTL-06 and DTL-07 (code changes: verify whether they landed, describe the result), DTL-14 (COLD-CATALOG 'Not built', the gap check and the one-page report leave: planning writes them into planning/COLD.md; COLD-PUSH's dated measurement), DTL-16 and DTL-19 docblocks, DTL-17, DTL-18 (ledger marks: pointer to STOCKER.md#the-ledger, cold's own conclusions only), TCL-05 (COLD-AUDIT: removal is offered only for partitions cold storage holds at the catalog version, and files go to the trash, if the code says so), TCL-19 (COLD-EVICT 'Running it alongside a push', COLD-AUDIT:53, COLD.md watching). legacy/ no longer exists: DXC-30 and DTL-11 reduce to COLD-AUDIT naming nothing as 'not rebuilt' (the ideas go to planning). Incoming: VOCABULARY's Snapshot mechanics (incremental snapshots) into COLD-CATALOG.md if missing (DPLT-13; entry cuts them); BINANCE.md L324-332 cold-storage state into COLD.md only if still true (DVEN-16 step 5; venues-b deletes).\ndev/tooling/README.md (DTL-01, DTL-08, DTL-09, DXC-11): a `cold` entry with one sentence and a link; a two-line layout; env precedence exactly as src/shared/utils/env.ts does it now; rabbit as it behaves now; no RABBITMQ_MGMT_URL if nothing reads it; no -v; build first, `./tools` runs dist/; no 'Future Enhancements' (deleted). CLI help strings in index.ts are code: report mismatches. dev/tooling/.env.example (DPLT-11): the CATALOG_URL comment.\nDocblocks you own: src/commands/cold.ts (DTL-04), src/tools/cold/push/archives/index.ts and lock.ts (DTL-16, TCL-19), shared/vault/fetch.ts and pull/archives/bring.ts (DTL-19); verify first, TCL commits may have done them."
+  },
+  {
+   "name": "frozen",
+   "files": [
+    "CLAUDE.md",
+    ".github/agents/ci-monitor-subagent.agent.md",
+    ".github/prompts/monitor-ci.prompt.md",
+    ".github/skills/link-workspace-packages/SKILL.md",
+    ".github/skills/monitor-ci/SKILL.md",
+    ".github/skills/nx-generate/SKILL.md",
+    ".github/skills/nx-import/SKILL.md",
+    ".github/skills/nx-import/references/GRADLE.md",
+    ".github/skills/nx-import/references/JEST.md",
+    ".github/skills/nx-import/references/NEXT.md",
+    ".github/skills/nx-import/references/TURBOREPO.md",
+    ".github/skills/nx-import/references/VITE.md",
+    ".github/skills/nx-plugins/SKILL.md",
+    ".github/skills/nx-run-tasks/SKILL.md",
+    ".github/skills/nx-workspace/SKILL.md",
+    ".github/skills/nx-workspace/references/AFFECTED.md",
+    "dev/tooling/.deprecated/README.md",
+    "dev/tooling/.deprecated/data/docs/DATA-DEDUP.md",
+    "dev/tooling/.deprecated/data/docs/DATA-PREPARE.md",
+    "dev/tooling/.deprecated/data/docs/DATA-RECOVER.md",
+    "dev/tooling/.deprecated/data/docs/DATA-RESORT.md",
+    "dev/tooling/.deprecated/data/docs/DATA-STATUS.md",
+    "dev/tooling/.deprecated/data/docs/DATA-SYNC.md",
+    "dx/.github/copilot-instructions.md",
+    "dx/LICENSE.md",
+    "dx/README.md",
+    "dx/USAGE.md",
+    "dx/docs/commands.md",
+    "dx/tests/README.md",
+    "dx/tests/fixtures/modules/testmod/README.md",
+    "dx/tests/fixtures/services/testapp/README.md",
+    "packages/netgate/README.md",
+    "packages/rabbitmq/README.md",
+    "packages/rabbitmq/docs/api.md",
+    "packages/rabbitmq/docs/backpressure.md",
+    "packages/rabbitmq/docs/connection.md",
+    "packages/rabbitmq/docs/consuming.md",
+    "packages/rabbitmq/docs/examples.md",
+    "packages/rabbitmq/docs/publishing.md",
+    "packages/rabbitmq/docs/topology.md",
+    "packages/service-kit/README.md",
+    "packages/service-kit/docs/README.md",
+    "services/.deprecated/README.md",
+    "services/.deprecated/scribe/README.md",
+    "services/.deprecated/scribe/SCRIBE.md",
+    "services/.deprecated/tardy/README.md",
+    "services/.deprecated/tardy/TARDY.md"
+   ],
+   "items": [],
+   "depends_on_code": [],
+   "instructions": "NOT A WRITER GROUP: do not schedule. These files are listed only so that every doc file has exactly one owner. CLAUDE.md is the binding rule set. dx/** and packages/** are git submodules (separate repositories, out of the review's scope): any change goes to those repositories in a separate pass. services/.deprecated/** and dev/tooling/.deprecated/** document retired code and stay as they are (entry adds two moved BitMEX logs to dev/tooling/.deprecated/data/docs/; those two files are entry's). .github/agents, prompts and skills are Nx-generated. Flag to the owner: packages/service-kit/docs/README.md is an empty file."
+  }
+ ]
+}

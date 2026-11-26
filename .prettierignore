@@ -13,3 +13,6 @@ dx/
 
 **/.deprecated/
 pnpm-lock.yaml
+
+# Review records, kept as written
+reviews/

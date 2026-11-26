@@ -1,0 +1,679 @@
+{
+ "unit": "stocker",
+ "assessment": "Stocker's normalisation core is careful: timestamp-unit inference, positional-width guards, TRY_CAST, the revision/ledger design, staging-then-rename and the space checks are well reasoned and mostly backed by measurements; 596 runnable tests pass (87% statement coverage). The weak points are fault isolation in the sweep, how `decide` meets the vault states the ledger explicitly supports (partly or wholly moved-out months), durability, and the archive contract shared with hauler and catalog.\n\nMost serious, all reproduced: one corrupt archive or one venue the catalog 404s aborts every sweep forever (STK-01); the default prod image cannot start any node service because its CMD names dist/index.js while tsc emits dist/src/index.js (STK-02); completing a split month that is partly moved out silently drops the moved-out instruments' neighbour hours and records the month complete (STK-03); a withdrawn file left on disk by hauler stops its partition matching the catalog forever (STK-04, needs a cross-service decision). Next tier: a moved-out month is fully restocked instead of waiting, and an interrupted restock is then mis-repaired as a side completion (STK-05); no fsync anywhere and a torn ledger line swallows the next record (STK-06); DuckDB spill is uncapped, outside .stocker-tmp and survives a kill, contrary to three docs (STK-07); an unhandled rejection from stock() can kill the process (STK-08); instrument cell values become file names unchecked and NULL instruments are dropped or kept depending on file size (STK-09).\n\nDocumentation (the user's explicit concern): STOCKER.md, README and DATA_PIPELINE.md describe behaviour the code no longer has (sequential partitions, table/symbol filters, spill location, .csv.gz untouched, one file per instrument), and many docblocks carry history, plans, false claims or are attached to the wrong declaration (STK-10, STK-21, plus doc parts of STK-07/17/18). Keep each fact's deep explanation in STOCKER.md only, per CLAUDE.md.\n\nTesting: the crash/failure/placement/piece-resume paths of a sweep, sweepScratch, the plausibility guard, the worker pool, tar.gz and the zip streaming path have zero coverage; the 'zip64' test does not build a zip64 archive; the output-version guard does not see margin or repeatsRows (STK-11..14, STK-26).\n\nRestructuring recommendation (both lenses): `decide` (~170 lines) and `stock` (~260 lines) rely on `continue`/fall-through control flow that produced STK-03, STK-05 and STK-24; splitting them into functions with explicit outcomes (completionJob / stockJob returning Job | null | 'skip') and splitting build.ts (986 lines) into read/join/pieces modules is worth scheduling before the planned new functionality (STK-30). Cross-cutting: the archive contract between hauler, catalog and stocker should state which files under a partition's directories are 'the partition' (STK-04). Writing a month into a fresh directory and switching with one atomic rename, or recording the per-symbol instrument list in the ledger line, would remove a class of placement risks (STK-03/05/06/29) at once.\n\nChecked and NOT bugs: header CSVs gaining a column mid-month (projection pruning avoids schema mismatch); the running month cannot churn the previous month's revision (catalog 'settled' needs >15 days); ndjson maximum_object_size does not inflate memory; q() quoting is used consistently (except dead countRows).",
+ "items": [
+  {
+   "id": "STK-01",
+   "title": "A single failure while deciding (corrupt archive, catalog 404/500 for one venue) aborts the whole sweep, on every sweep",
+   "severity": "high",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/scan.ts:97-127",
+    "services/stocker/src/scan.ts:159-160",
+    "services/stocker/src/scan.ts:349-373",
+    "services/stocker/src/scan.ts:1004",
+    "services/stocker/src/room.ts:22-31",
+    "services/stocker/src/containers/zip.ts:184-201",
+    "services/stocker/src/catalog.ts:69-93",
+    "services/stocker/src/index.ts:78-81",
+    "services/catalog/src/api/contents.ts:35-40"
+   ],
+   "problem": "jobsOf/decide run inside the `deciding` task with no per-venue or per-target error isolation. Any exception (listPartitions failing for one venue, weightsOf rejecting on an unreadable zip via piecedOf or fits->shortOf, a readdir/stat error) is stored as `refused` (scan.ts:107-109), rethrown by following() once ready drains (scan.ts:124), rethrown by sweep() (only LowSpace is caught, scan.ts:160) and logged as 'Sweep failed'. Every later target and every later venue (alphabetical, venuesInScope defaults to all SERIES venues) is never considered; summary.failed is never incremented and no log names the partition. Because the failure is deterministic, the service is stuck permanently.",
+   "evidence": "Reproduced by the reviewer and independently by the second verifier with a control: two 17 MB binance zips, the second truncated and catalogued at its truncated size, plus a valid gate partition -> `End of central directory record signature not found`, VAULT []. Catalog answering 404 {\"error\":\"No such venue\"} for binance -> sweep throws, gate never stocked. Control (gate alone) builds.",
+   "fix": "In jobsOf: (a) wrap `await listPartitions(venue, datasets)` in try/catch; rethrow LowSpace; otherwise logger.error({ venue, err }, 'Catalog listing failed - venue skipped this sweep'), summary.failed++ (or a new summary.unlisted counter), `continue`. (b) wrap `await decide(target, partitions, sweeping, summary)` the same way: rethrow LowSpace, otherwise log { partition: labelOf(target.key), err } 'Deciding failed - partition skipped', summary.failed++, continue. decide creates a Prefetch only at its return statements, so a throw leaks no extraction; report() already warns when failed > 0. Only LowSpace may end the generator.",
+   "tests": "sweep.test.ts with the fetch stub: (1) catalog 404s an earlier venue (binance) and gate has a valid partition -> gate built, sweep resolves, failed === 1. (2) A >=32 MB direct (pieced) binance instrument whose second zip is truncated and catalogued at truncated size, next to a healthy gate partition -> sweep resolves without throwing, failed >= 1, gate built.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-02",
+   "title": "Prod Docker image starts dist/index.js, which the build does not emit; every node service built from it crash-loops",
+   "severity": "high",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docker/prod.node.Dockerfile:62",
+    "services/stocker/docker/compose.yml:14-16",
+    "services/stocker/package.json:5",
+    "services/stocker/package.json:9",
+    "docker/node/entrypoint.sh:23",
+    "docker/README.md:83",
+    "services/{catalog,catalog-ui,hauler,hoarder,pipe,prospector,router,vault}/package.json:5"
+   ],
+   "problem": "compose.yml builds `docker/${APP_ENV:-prod}.node.Dockerfile`, so prod is the default. Its CMD (line 62) runs `node ... dist/index.js` from /app/services/${SERVICE_NAME}. The service tsconfigs are composite with no rootDir, so output is dist/src/index.js. The dev entrypoint and every `start` script use dist/src/index.js; every package.json `main` and docker/README.md:83 say dist/index.js.",
+   "evidence": "`ls services/*/dist` -> `src tsconfig.tsbuildinfo` for every service. `node dist/index.js` in services/stocker -> Cannot find module. .dockerignore excludes dist and the image runs the same `pnpm -r build`. .env.example sets APP_ENV=dev, which is why local stacks do not hit it.",
+   "fix": "1. docker/prod.node.Dockerfile:62 -> `CMD [\"/bin/sh\", \"-c\", \"exec node --max-old-space-size=${NODE_MEMORY_MB} dist/src/index.js\"]`. 2. Set `\"main\": \"dist/src/index.js\"` in services/{stocker,catalog,catalog-ui,hauler,hoarder,pipe,prospector,router,vault}/package.json (or drop `main`; nothing imports these). 3. docker/README.md:83 -> 'Entry point at `dist/src/index.js`'. Do NOT change rootDir: containers/pool.ts resolves worker.js relative to the built layout and the dev entrypoint/start scripts already expect dist/src. Note: this edit touches files outside services/stocker (shared Dockerfile, other services' package.json); coordinate with the other units' reports to avoid double edits.",
+   "tests": "Cheap repo test: after build, for each service assert existsSync(join(pkgDir, pkg.main)) and that the Dockerfile CMD path exists. Optional CI smoke: build the prod image for one service and run `docker run --rm --entrypoint sh <img> -c 'test -f dist/src/index.js'`.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-03",
+   "title": "Completing a split month that is partly moved out of the vault skips the moved-out instruments' sides and records the month complete",
+   "severity": "high",
+   "category": "correctness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/scan.ts:450-479",
+    "services/stocker/src/scan.ts:741",
+    "services/stocker/src/scan.ts:752-756",
+    "services/stocker/src/scan.ts:924-925",
+    "services/stocker/src/vault.ts:154-155",
+    "services/stocker/src/ledger.ts:48-53",
+    "services/stocker/src/ledger.ts:253",
+    "docs/tooling/COLD-VAULT.md:19-21"
+   ],
+   "problem": "The ledger supports a backed-up partition having all, some or none of its files in the vault, and COLD-VAULT evicts/pulls a large month's instruments one by one. decide takes the completion path whenever isWhole(before), true as soon as one instrument file is present. Side tasks are built only for before.symbols (sideGroupsOf), keepOnly(dirOf(side), own) discards the rest, and record() writes a line whose pre/postVersion is the neighbour's version at a new revision. The moved-out instruments' neighbour hours are never built and nothing retries (arrivedFor no longer sees a `missing` side). When the files are restored and the archives are gone, validate reports a false loss and the month cannot be rebuilt.",
+   "evidence": "Reproduced by reviewer and second verifier (bybit perp 1h klines, AAAUSDT+BBBUSDT, _test_splitAt(0)): after removing AAAUSDT/202411.parquet and publishing December, files are BBBUSDT/202411.parquet + BBBUSDT/202411.post.parquet only; ledger `...|missing|ffcf1820eb63|3114|2` -> updating -> `...|7ba8c5b2fcd8b28f|3e6cf5d2890b|3114|2`; validate() 0; next sweep current:2. Second verifier then restored the file and removed archives: validate() wrote `it has 3 files where the ledger says 2` to ERROR.log and the month counted missing.",
+   "fix": "In decide's per-candidate loop compute `present = before ? (before.bundle ? 1 : before.symbols.length) + before.sides.length : 0` (entry.count records own files plus side files, as validate counts them). Take the completion path only when isWhole(before) && present === entry.count. Otherwise set `unbuilt = { sides: arrived.map(e => e.end), main: false, sources: (await edgesOnDisk(arrived, ...)) !== null }` and `continue`, so the month is reported 'Spill pending' and nothing is recorded. Restructure the two `if`s so a partly present month cannot fall through to the full-stock path (same `continue` as STK-05; implement both together). Mirror the check in placement next to scan.ts:741: re-read the slice and throw 'The month it completes is not wholly in the vault' when counts differ. Longer-term alternative: record the instrument list per ledger line and build sides per symbol.",
+   "tests": "Split month (_test_splitAt(0)), two instruments, post missing, backedup.csv holding its revision; delete one instrument's file; publish the next month; sweep -> no .post written for either instrument, ledger still names the old revision with post `missing`, summary.partial counts it. Restore the file, sweep -> both .post files written, validate() 0.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-04",
+   "title": "Withdrawn files stay on disk under canonical names, so a partition holding one never matches the catalog again",
+   "severity": "high",
+   "category": "correctness",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/disk.ts:23-59",
+    "services/stocker/src/disk.ts:77-79",
+    "services/stocker/src/scan.ts:482-484",
+    "services/stocker/src/scan.ts:596",
+    "services/stocker/src/catalog.ts:46-50",
+    "services/stocker/src/types.ts:40",
+    "services/prospector/src/catalog/cache/partitions.ts:168-189",
+    "services/hauler/src/store.ts:90-99",
+    "docs/services/HAULER.md:197-205",
+    "docs/services/CATALOG-API.md:98"
+   ],
+   "problem": "filesOf counts every canonical name under the partition's month directories; matches() requires that count and byte sum to equal the catalog's files/bytes. The catalog leaves withdrawn (unconfirmed) files out of files/bytes and counts them in `withdrawn`, which stocker ignores. Hauler never deletes a withdrawn file. So once a venue withdraws (or renames) a downloaded file, disk holds files+1 forever: the partition is never stocked, or once stocked is marked outdated and never rebuilt; neighbours that read its edge are blocked too (edgesOnDisk uses the same matches). The vault keeps the withdrawn file's rows.",
+   "evidence": "Second verifier reproduced (scratch f2.test.ts): gate BTC_USDT 202606 two daily files stocked, then catalog stops counting day 02 while the file stays -> sweep 2 and 3: outdated 1, missing 1, built 0; ledger [16c86ecff0c8, outdated]; a never-stocked month with a withdrawn file: missing 1 every sweep.",
+   "fix": "Preferred: match by identity. Catalog (prospector) exposes a partition's confirmed files as {path,size} (per-partition endpoint or flag on /venues/:venue/partitions). Stocker fetches it only when the cheap count/bytes check fails, filters `found` to the confirmed keys, re-runs matches, and passes the filtered list to groupsOf/tasksOf and edgeFilesOf so withdrawn rows never reach the vault. Alternative: hauler/prospector renames withdrawn files to `<name>.withdrawn` (parseKey already rejects it), no stocker change. Do NOT use the stopgap `found.length === files + withdrawn` (withdrawn bytes are not counted; a never-downloaded withdrawn file proves nothing). Stopgap that is safe now: carry `withdrawn` through catalog.ts:46-50 into Partition and, on a mismatch with withdrawn > 0, log a distinct 'disk holds files the venue withdrew' message.",
+   "tests": "Stub models withdrawn entries (count toward withdrawn only): (a) stocked two-file month whose second file is withdrawn but on disk is rebuilt without it; (b) never-stocked month with a withdrawn file on disk is stocked; (c) a month whose neighbour has a withdrawn file still gets that edge.",
+   "owner_question": "Where does partition file identity come from? (a) catalog returns confirmed file keys+sizes per partition (new prospector/catalog API), or (b) hauler/prospector moves withdrawn files aside (e.g. `.withdrawn` suffix). This also defines the hauler/catalog/stocker archive contract: which files under a partition's directories are 'the partition'. Meanwhile, should the safe diagnostic stopgap (distinct log when withdrawn > 0) land now?"
+  },
+  {
+   "id": "STK-05",
+   "title": "A month whose own files were moved out is fully restocked when its neighbour arrives (docs say it waits), and an interrupted restock is repaired as if it were a side completion",
+   "severity": "medium",
+   "category": "correctness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/scan.ts:444-453",
+    "services/stocker/src/scan.ts:455-506",
+    "services/stocker/src/scan.ts:800-805",
+    "services/stocker/src/ledger.ts:71",
+    "services/stocker/src/ledger.ts:133",
+    "services/stocker/src/ledger.ts:179-201",
+    "services/stocker/src/ledger.ts:245",
+    "services/stocker/src/ledger.ts:368-378",
+    "docs/services/STOCKER.md:157-162"
+   ],
+   "problem": "When a neighbour has arrived but !isWhole(before), decide sets `unbuilt` without `continue` and falls through to the ordinary path, returning a full restock (completes: null) if the archives are on disk. STOCKER.md step 4 and the code comment say such a month waits. stock() then writes an UPDATING line via mark() with the same grain/bundle/version and postVersion missing->neighbour version, exactly the shape sidesAdded reads as 'only a side was being added'. If stopped between mark and record, repair clears only the side files and re-appends the old line at revision A while the new build's own files (in split mode possibly a subset) remain; validate skips it because revision A is in backedup.csv. The month is never restocked.",
+   "evidence": "Reviewer reproduced (scratch stk/vt/repro.test.ts): November bybit 1h klines (post missing), revision in backedup.csv, @/202411.parquet deleted, archive kept, December published -> built 2, completed 0, @/202411.parquet recreated; ledger [99b4315da7ef post=missing], [updating, post=0e7683...], [4efcc305b5c4]. Truncating after the updating line and running repair() -> repaired 1, post removed, last line 99b4315da7ef|missing again, new @/202411.parquet left in place. Verifier traced the same.",
+   "fix": "(1) scan.ts:452-453: add `continue` inside `if (arrived.length > 0 && !isWhole(before))` after setting unbuilt, so the month waits and is reported via the existing `entry && unbuilt` branch (code follows the docs; do not change the docs). (2) Make repair intent explicit: add `export const UPDATING_SIDES = 'updating-sides'` in ledger.ts; mark() takes `completing: boolean` and writes `completing ? UPDATING_SIDES : UPDATING`; pass `!!completes` from scan.ts (~803). Treat both markers as 'updating' wherever UPDATING is checked (ledger.ts:71, :179, :188). In repair, take the clear-sides + append(was) path only when `entry.revision === UPDATING_SIDES && was && added.length > 0`; for UPDATING always clear the whole month. Keep sidesAdded only as a sanity check. Document the marker in STOCKER.md's ledger section. Implement together with STK-03 (same code region).",
+   "tests": "(a) stocked month with post missing, in backedup.csv, own parquet deleted, archives on disk; publish neighbour, sweep -> built 0, partial 1, @/YYYYMM.parquet not recreated. (b) ledger ending in a plain UPDATING line differing only by post missing->present; repair() removes all the month's files and re-appends nothing. (c) existing side-completion repair test still reinstates, now with UPDATING_SIDES.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-06",
+   "title": "Ledger and vault files are written without fsync, and a torn ledger line swallows the next record",
+   "severity": "medium",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/ledger.ts:346-353",
+    "services/stocker/src/ledger.ts:381-388",
+    "services/stocker/src/ledger.ts:391-392",
+    "services/stocker/src/ledger.ts:253-264",
+    "services/stocker/src/vault.ts:175-226",
+    "services/stocker/src/build.ts:505-508",
+    "services/stocker/src/build.ts:877"
+   ],
+   "problem": "The mark -> clear -> rename -> record protocol is the vault's only integrity guarantee, but no step is durable. (1) append is a bare appendFile without fsync. (2) Staged Parquet files are renamed into the vault without fsyncing data or directories, after clear() unlinked the old files, so a renamed file can come back zero-length after power loss while the record line survives; validate checks split months by count only. (3) linesOf keeps any line with >= width fields and does not require a trailing newline, so a torn final line glues onto the next append and that record is lost. (4) finishPiece writes the .built note with plain writeFile after the Parquet without fsync. (5) headed writes the header only when the file does not exist, while linesOf always drops line 1, so an existing empty ledger loses its first record.",
+   "evidence": "Reproduced (scratch vt/torn.test.ts): ledger with a full 202606 line plus 70 bytes of a 202607 line, then reinstate() for spot/202608 -> read() returns [202606], [202607 revision '' version '202606' count NaN]; 202608 is gone.",
+   "fix": "ledger.ts append: `fh = await open(path, 'a+')`; size via fh.stat(); if size === 0 prefix the header; if size > 0 and the last byte is not '\\n', prefix '\\n'; write the line, `await fh.sync()`, close; when the file was just created, fsync the vault directory. Replace headed's existence test with this size check. linesOf: drop the final segment when text does not end in '\\n'; use `fields.length === width` for the ledger (keep `>= 2` for backedup.csv). vault.ts publishBundle/publishSplit: before each rename open the staged file, fh.sync(), close; after all renames fsync each touched directory (sliceDirOf(key)/<symbol or @>) before scan.ts calls record(). build.ts finishPiece: fsync the piece Parquet outputs, then write the note to `${FINISHED}.tmp`, fsync, rename. Defer the PAR1 footer check in validate (opens thousands of files at startup).",
+   "tests": "(1) ledger ending in a 70-byte fragment, then reinstate(): read() returns the appended entry intact and ignores the fragment. (2) existing zero-byte ledger.csv then one record(): read() returns it.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-07",
+   "title": "DuckDB spill is uncapped by STOCKER_MIN_FREE_GB, lives outside .stocker-tmp, is never cleared and survives a hard kill; README, STOCKER.md and a docblock say otherwise",
+   "severity": "medium",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/db.ts:27-36",
+    "services/stocker/src/build.ts:624-648",
+    "services/stocker/src/index.ts:54-59",
+    "services/stocker/src/room.ts:22-31",
+    "services/stocker/README.md:66-67",
+    "docs/services/STOCKER.md:495-499"
+   ],
+   "problem": "open() sets temp_directory to `<vault>/.duckdb-tmp` and never sets max_temp_directory_size (DuckDB default: 90% of available disk). Free space is checked only between partitions and before extraction, so one sort can spill far below the floor, starving ledger appends (ENOSPC after renames -> repair removes the month). sweepScratch clears only `<vault>/.stocker-tmp`; spill left by SIGKILL/OOM stays and a new instance does not remove it, silently shrinking every later free-space check. README, STOCKER.md and the sweepScratch docblock ('Everything transient lives in one directory') claim the spill is in .stocker-tmp and cleared at startup.",
+   "evidence": "`current_setting('max_temp_directory_size')` -> '90% of available disk space'. Both reviewers killed a spilling DuckDB with -9 and found duckdb_temp_storage_*.tmp files (715 MB / 20 MB) still present after a fresh instance opened and closed with the same temp_directory.",
+   "fix": "db.ts: `const spill = join(config.vaultDir, SCRATCH, 'engine')` (import SCRATCH from './containers'); the existing mkdir recreates it. Leave sweepScratch's `name !== STAGE` rule alone: it already removes everything but STAGE, so 'engine' is removed at startup (index.ts runs sweepScratch before open()). Do NOT add 'engine' next to STAGE (that would keep it). Once, in sweepScratch, `rm(join(config.vaultDir, '.duckdb-tmp'), { recursive: true, force: true })` for existing deployments. After the SETs: `SET max_temp_directory_size='${Math.max(1, Math.floor(await freeGb() - config.minFreeGb))}GB'`, optionally refreshed at each sweep start as free + current spill - minFreeGb. Docs then become true; re-read README, STOCKER.md and the sweepScratch docblock so they name only <vault>/.stocker-tmp and mention the cap.",
+   "tests": "After open(): current_setting('temp_directory') is under .stocker-tmp and max_temp_directory_size is not the 90% default. sweepScratch removes `.stocker-tmp/engine/duckdb_temp_storage_x.tmp` and a legacy `.duckdb-tmp`, keeps stage/ pieces.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-08",
+   "title": "A rejection from stock() outside its own try/catch is unhandled (can kill the process) and leaks its Prefetch",
+   "severity": "medium",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/scan.ts:142-158",
+    "services/stocker/src/scan.ts:636",
+    "services/stocker/src/scan.ts:645-648",
+    "services/stocker/src/scan.ts:718",
+    "services/stocker/src/scan.ts:850-858",
+    "services/stocker/src/prepare.ts:48",
+    "services/stocker/src/prepare.ts:78-95",
+    "services/stocker/src/prepare.ts:115-121"
+   ],
+   "problem": "`const run = stock(...).finally(...)` is only added to a Set; handlers attach later via Promise.race in freed() or the final allSettled. Awaits outside stock's try/catch (slices.of readdir, keepPieces and the stale-staging rm before the build, keepPieces/rm(staging) in the placement finally) can reject (EACCES/EIO/EBUSY; force only ignores ENOENT). If that happens while the loop awaits following(), Node 22's default --unhandled-rejections=throw kills the process; no unhandledRejection handler exists in service-kit/shared/stocker. The early exit also skips prefetch.release(), leaving the Prefetch in the module-global `waiting` list with its slots charged to `held`, throttling later prefetches.",
+   "evidence": "scan.ts:152-157 has no .catch; grep finds no unhandledRejection/uncaughtException handler.",
+   "fix": "scan.ts:152: `const run = stock(mine, job, sweeping, summary).catch((err) => { summary.failed++; logger.error({ err, partition: labelOf(job.key) }, 'Stocking failed'); }).finally(() => { idle.push(...mine); running.delete(run); });` (the inner catch returns false without rethrowing, so no double count). In stock, wrap everything after destructuring in `try { ... } finally { prefetch.release(); }` (release is idempotent).",
+   "tests": "vi.spyOn node:fs/promises rm (staging path) or keepPieces to reject (not permissions; tests run as root) -> sweep resolves, failed === 1, _test_held() back at baseline.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-09",
+   "title": "Instrument cell values become file names unvalidated, and NULL/empty instruments are dropped on the direct path but filed under the catalog symbol in a batch",
+   "severity": "medium",
+   "category": "correctness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/build.ts:113",
+    "services/stocker/src/build.ts:306-325",
+    "services/stocker/src/build.ts:355-377",
+    "services/stocker/src/build.ts:679",
+    "services/stocker/src/build.ts:818-844",
+    "services/stocker/src/build.ts:877",
+    "services/stocker/src/vault.ts:52-57",
+    "services/stocker/src/vault.ts:212-222"
+   ],
+   "problem": "For series with `instrument`, the vault file name is the cell value: stagedOf(staging, instrument) then fileOf(key, symbol). Nothing rejects '', '.', '..', path separators, NUL or names starting with '@'. '..' segments let settleFile's rename move output elsewhere in the vault; '' yields `<slice>/YYYYMM.parquet` outside any symbol folder (indexOf never sees it -> validate reports a false loss every start); '@' lands on the bundle path. Separately, writeSplit (>=32 MB groups) drops NULL-instrument rows (`WHERE _instrument IS NOT NULL`) silently, while batchFrom files them under the catalog symbol (`coalesce(u._instrument, m.sym)`, '@' for a market bundle), so contents depend on file size.",
+   "evidence": "build.ts:822 `SELECT DISTINCT _instrument ... WHERE _instrument IS NOT NULL`; build.ts:321 `coalesce(u._instrument, m.sym) AS _sym`; build.ts:679 `join(staging, `${symbol}${STAGED}`)`. `regexp_extract('BTCUSDT', '^([^-]+)-', 1) = ''` is true. No current venue file is known to hit this (gate option names are hyphenated); '/' alone fails loudly (COPY to a missing dir).",
+   "fix": "1. Deny-list helper (NOT an allow-list regex: the suggested one omits '_' and would reject every gate BTC_USDT): `assertInstrumentName(key, name)` rejecting name === '' | '.' | '..', /[\\/\\\\\\0]/, or name.startsWith('@') (covers BUNDLE '@' and WHOLE '@batch.'); throw `${labelFor(key, symbol)}: an input names an instrument that cannot be a file name: ${JSON.stringify(name)}`. Call it on every instrument in writeSplit and batchFrom before stagedOf (or do it in SQL with one aggregate query per table). 2. One NULL policy, fail loudly, only for series that declare `instrument`: in writeSplit remove the silent IS NOT NULL filter and throw (naming the file) when count of `_instrument IS NULL OR _instrument = ''` > 0; in batchFrom add a `_named` flag column (excluded from COPY) and throw when `_named AND coalesce(_instrument,'') = ''`. Keep the coalesce for non-instrument series.",
+   "tests": "writeSplit and batchFrom fixtures with instrument values '../x', '', '@' and NULL -> partition fails, nothing written outside staging; a direct and a batched build of the same NULL-instrument fixture give the same outcome.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-10",
+   "title": "STOCKER.md, README and DATA_PIPELINE.md describe behaviour the code does not have",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/STOCKER.md:180",
+    "docs/services/STOCKER.md:371",
+    "docs/services/STOCKER.md:376-380",
+    "docs/services/STOCKER.md:430-438",
+    "docs/services/STOCKER.md:495-499",
+    "docs/DATA_PIPELINE.md:106-107",
+    "services/stocker/README.md:17-18",
+    "services/stocker/README.md:66-68",
+    "services/stocker/src/scan.ts:129-158",
+    "services/stocker/src/config.ts:21-31"
+   ],
+   "problem": "(1) STOCKER.md:376-380 says partitions go one after another and staging is whole before the next starts; scan.ts runs light partitions (<64 MiB, ALONE_BYTES) side by side on one connection each, heavy ones on every connection, placement one at a time. (2) STOCKER.md:430-433 describes table and symbol filters; only STOCKER_VENUES exists. (3) Spill location (see STK-07). (4) STOCKER.md:435-438 and README:17-18 say .csv.gz is handed over untouched; small (<=32 KiB) .csv.gz in a batch with a shape are inflated and gathered (gzip.members, extract.ts:43-60, needsExtracting). (5) STOCKER.md:371 'The vault holds one file per instrument' and DATA_PIPELINE.md:107 'one file per instrument' contradict STOCKER.md:64/README:43 (a month up to 1 GB is one `@` file). (6) STOCKER.md:180 says the vault is read only for a partition about to be placed; decide reads the slice whenever a neighbour has arrived (scan.ts:450).",
+   "evidence": "Each claim checked against code by the verifier (scan.ts:129-158 and :287, config.ts, gzip.ts:16-28, extract.ts:43-60/92-93, db.ts:27).",
+   "fix": "Deep explanation stays in STOCKER.md only (CLAUDE.md one-home rule); other docs touch at their depth and point there. (1) Replace STOCKER.md:376-379: the pool holds STOCKER_CONCURRENCY connections to one instance; a partition under 64 MB takes one connection and builds its tasks on it, as many side by side as connections are free; a heavier one waits for every connection and builds its tasks side by side; partitions are put in place (joined, ledgered, renamed) one at a time; each has its own staging directory. Keep the instance-wide memory paragraph (404-408). (2) Describe only STOCKER_VENUES (case-insensitive; unknown token fails startup); delete table/symbol filter sentences. (3) After STK-07, the existing '.stocker-tmp' wording becomes true; add the spill cap. (4) STOCKER.md:435-438 and README:17-18: gzip is read natively; a .csv.gz of <=32 KiB in a batch whose series can be gathered is inflated in memory and gathered with the batch's other small files; larger ones go to the engine untouched; .zip and .tar.gz are extracted (small members gathered the same way). (5) STOCKER.md:371: 'A month is one file under `@`, or a file per instrument when it is split'; DATA_PIPELINE.md:107: 'one file, or a file per instrument for a large month' with a pointer to STOCKER.md. (6) STOCKER.md:180: add that the slice is also read for a stocked month whose neighbour has arrived. Present tense only, no history. Re-read README and STOCKER.md together afterwards.",
+   "tests": "None (docs). Re-read all three files together for contradictions.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-11",
+   "title": "The failure, placement-error and piece-resume paths of a sweep have no test coverage",
+   "severity": "medium",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/scan.ts:142-146",
+    "services/stocker/src/scan.ts:159-164",
+    "services/stocker/src/scan.ts:672-680",
+    "services/stocker/src/scan.ts:693-715",
+    "services/stocker/src/scan.ts:835-858",
+    "services/stocker/src/scan.ts:1031-1032",
+    "services/stocker/tests/sweep.test.ts"
+   ],
+   "problem": "Never executed in coverage: the freed() wait (143), LowSpace inside the loop (160), reuse of a finished piece (675-679), finishPiece in stock (693), the worker catch (699), the joinPieces loop (708-714), the whole placement catch (836-849: failure, NoRoom warn, failed++, repair()), keepPieces on failure (854), pieceDirOf (1032). The crash-resume and failure-isolation behaviour, the service's main data-safety property, is tested only at unit level.",
+   "evidence": "Reviewer and verifier coverage runs (scratch cov-stocker, cov-v-stocker) agree on the uncovered lines. _test_pieceAt is used only by build.test.ts.",
+   "fix": "Add sweep tests using the existing catalog stub and fixtures (see tests).",
+   "tests": "(1) a partition whose build throws (malformed header CSV or a non-gzip .gz) leaves vault files and ledger line unchanged, failed === 1. (2) repair path: vi.spyOn the placement publish/rename helper to reject on its second call after `marked`; after the sweep the vault holds the prior files and repair ran. (3) piece resume: _test_pieceAt so one instrument has >=2 pieces; make the second piece's archive unreadable -> failed 1, first piece dir and .built note kept; restore, sweep -> success and the first piece's parquet inode/mtime unchanged. (4) heavy partition: add _test_aloneAt(bytes), two connections, two partitions; assert the heavy one never overlaps the other (spy on buildGroup). (5) mid-sweep LowSpace: stub freeGb below minFreeGb after the first partition -> summary.stopped === true, remaining partitions untouched. Also add the regression tests listed under STK-01/03/05/16.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-12",
+   "title": "Production extraction paths are untested: worker pool, tar.gz, zip streaming fallback (the \"zip64\" test builds a plain zip)",
+   "severity": "medium",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/tests/unpack.test.ts:114-121",
+    "services/stocker/src/containers/zip.ts:46",
+    "services/stocker/src/containers/zip.ts:184-237",
+    "services/stocker/src/containers/targz.ts:9-22",
+    "services/stocker/src/containers/pool.ts:35-93",
+    "services/stocker/src/containers/worker.ts:12-15"
+   ],
+   "problem": "(1) 'still reads a zip whose directory uses the 64-bit form' passes `zip -fz-`, which disables zip64; the archive is read by membersOf, so streamed()/statedByEntry() (yauzl, used for every zip >32 MB) never run (zip.ts 62.9%). (2) targz.ts 9%: unpack never called (its path bug is fixed under STK-16). (3) pool.ts 25%, worker.ts 0%: tests run from source where worker.js is absent, so Pool.extract always falls back to the main thread; postMessage, error propagation and thread replacement are untested.",
+   "evidence": "`zip -fz-` archive has no PK\\x06\\x06 record (cd offset 0x43/0x44); `-fz` has it and 0xffffffff. Coverage: zip.ts 62.87%, targz.ts 9.09%, pool.ts 25%, worker.ts 0%.",
+   "fix": "Change the test to `-fz` and assert the streaming path ran (spy on yauzl.open, or a `_test_wholeAt(bytes)` hook set to 0); optionally assert the fixture contains `PK\\x06\\x06`. Add a weightsOf test on a forced-zip64 archive (covers statedByEntry). In pool.ts start(), also handle `thread.on('exit', code => ...)`: reject a pending settle with `extraction thread exited (${code})`, remove from idle, started--, pump(); guard against double-decrement after 'error' (a cheap safety net; only process.exit in a worker would trigger it today).",
+   "tests": "'streams a zip over the whole-read size' (hook); tar.gz with one top-level .data file and with dir/x.data, returned paths exist; pool test that compiles worker.ts to a temp worker.js (or a `_test_workerAt(path)` hook): results match extractInto, an extraction error rejects with its message, pool keeps working after thread.terminate().",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-13",
+   "title": "Startup scratch sweep, the plausibility guard and build-level malformed/width diagnosis are untested",
+   "severity": "medium",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/build.ts:63-65",
+    "services/stocker/src/build.ts:100-101",
+    "services/stocker/src/build.ts:632-648",
+    "services/stocker/src/build.ts:772-778",
+    "services/stocker/src/build.ts:925-946",
+    "services/stocker/src/build.ts:957-986"
+   ],
+   "problem": "sweepScratch (runs at every start and decides which built pieces survive) never runs in tests; nor do the `plausible` throw (the only guard against ts naming the wrong column), explainMalformed inside a failing build, the width-assertion throw in buildGroup, the gathered-into-a-direct-build guard and the 'formats disagree on instrument' guard. malformed.test.ts and width.test.ts test only the SQL in isolation.",
+   "evidence": "Uncovered in coverage-final.json: build.ts 633-647, 774-777, 937-945, 966-985, 64-65, 101 (confirmed by verifier's own run).",
+   "fix": "Add tests in tests/build.test.ts (see tests).",
+   "tests": "(a) sweepScratch keeps a finished piece (written via finishPiece) and its note, removes an unfinished piece dir, unpack-* and staged files. (b) series whose ts maps to a price column (100..200) -> buildGroup rejects /Implausible timestamps/, staging empty. (c) header file narrower than its header -> rejects /do not parse into columns/ naming the file. (d) positional file wider than declared -> rejects /more columns than the series declares/ before anything is staged. (e) buildGroup with a non-null pack entry -> rejects /gathered for a batch/.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-14",
+   "title": "The output-version guard digests only the projection; margin and repeatsRows can change the vault without a version bump being caught",
+   "severity": "medium",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/tests/output.test.ts:13-31",
+    "services/stocker/tests/output.test.ts:72-80",
+    "services/stocker/tests/output.test.ts:95-106",
+    "services/stocker/src/versions.ts:20-27",
+    "services/stocker/src/build.ts:891-900",
+    "services/stocker/src/schema/margin.ts:16-56",
+    "services/stocker/src/vault.ts:85-105"
+   ],
+   "problem": "versions.ts requires a manual bump for any output change and output.test.ts is the guard for a missed bump, but it digests only selectFor(series, csv.relation(...)). The margin column (marginColumn via marginOf) and repeatsRows de-duplication are applied in build.ts and never digested, and revisionOf does not fold them in. Editing an INVERSE regex or flipping repeatsRows changes partition contents while stocked months stay 'current' and the test stays green.",
+   "evidence": "output.test.ts:73-74 digests only the projection; its docblock limits itself to what the map reads. seriesFor uses marginOf, so a rule change that switches series is caught, but the written margin value is not.",
+   "fix": "In digestOf, also hash `marginOf(parsed.venue, parsed.market, parsed.symbol)` (only when fieldsOf(series.table) has a margin field, mirroring marginColumn) and `Boolean(series.repeatsRows)`, e.g. `.update(JSON.stringify({ margin, repeatsRows }))`. Update the docblock (13-31). Regenerate tests/fixtures/output.json once in the same change (delete, run with STOCKER_RECORD_OUTPUT=1), since the recorder refuses to overwrite unchanged-version digests. Do NOT hash margin rules into revisionOf (contradicts versions.ts: bump for output changes, never for code changes; a refactor would restock the venue).",
+   "tests": "Mutation check: flip repeatsRows on one fixture's series, or change the bitget rule so BTCUSD_CM reads linear -> the test fails with the 'no version says so' message.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-15",
+   "title": "Rows that share a timestamp are written in no fixed order (no tie-breaker; parallel sort is not stable)",
+   "severity": "medium",
+   "category": "correctness",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/build.ts:912-913",
+    "services/stocker/src/db.ts:48",
+    "services/stocker/src/versions.ts:23-27",
+    "services/stocker/src/schema/tables.ts:35"
+   ],
+   "problem": "orderOf sorts by ts (or ts, sequence for books). With preserve_insertion_order=false, DuckDB's parallel sort does not keep source order for equal keys, so same-millisecond trades can come out in a different order between rebuilds; replays and backtests are not reproducible. versions.ts says rows and their order are what is written.",
+   "evidence": "Reviewer t10.cjs (2M rows, 10 per ts, threads=4) and verifier rerun: 3 rows precede a lower-id predecessor.",
+   "fix": "If intra-timestamp order becomes a vault contract: trades `ORDER BY ts, TRY_CAST(tradeId AS BIGINT) NULLS LAST, tradeId`; tables without an id carry source position as hidden `_src` (filename) and `_row` (file_row_number or row_number() OVER (PARTITION BY filename) before projection), sort by ts, _src, _row and EXCLUDE them in COPY. Bump only the affected tables in TABLES (not EVERY). State in STOCKER.md that tie order is source order.",
+   "tests": "A month with many rows sharing a ts, built twice with threads>1 -> identical tradeId order.",
+   "owner_question": "Is the order of rows within one timestamp part of the vault's contract? If yes, which tie-breaker per table, and is a restock of the affected tables (trades etc.) acceptable given some archives may be gone?"
+  },
+  {
+   "id": "STK-16",
+   "title": "Archive members are extracted by base name, so same-named members overwrite each other; nested tar members are returned at paths that do not exist",
+   "severity": "low",
+   "category": "correctness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/containers/zip.ts:38-44",
+    "services/stocker/src/containers/zip.ts:222",
+    "services/stocker/src/containers/extract.ts:57",
+    "services/stocker/src/containers/targz.ts:19-21"
+   ],
+   "problem": "zip extraction (whole and streamed) writes each member to `${tag}${basename(name)}` and extract.ts's gathered path uses `${at}-${basename(member.name)}`; two members with the same base name in different folders map to one path, so the first member's rows are lost and the second's read twice, silently. targz extracts with directories preserved but returns join(own, basename(n)), which does not exist for a nested member (fails loudly with ENOENT) and collapses same-named members. Latent: every documented venue archive holds one member.",
+   "evidence": "Zip with a/data.csv='1,first' and b/data.csv='2,second' -> unpack returned [out/0-data.csv, out/0-data.csv] both '2,second'. Tar.gz with d/x.data -> returned <own>/x.data, existsSync false.",
+   "fix": "zip.ts whole path: `members.map(({ name, data }, index) => join(into, `${tag}${index}-${basename(name)}`))`; streamed: a per-file-entry counter, `${tag}${counter}-${basename(entry.fileName)}`. extract.ts:57: `${at}-${index}-${basename(member.name)}`. targz.ts: collect only File/OldFile entries and return join(own, normalize(entry.path)); skip any whose resolved path is not under own (node-tar already strips '..'/absolute unless preservePaths).",
+   "tests": "Zip with a/data.csv and b/data.csv unpacks to two distinct paths with distinct contents through both whole and streamed paths; tar.gz with dir/x.data returns an existing path (with STK-12).",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-17",
+   "title": "preserve_insertion_order is toggled instance-wide while other partitions are building, and the comment claims nothing else is building",
+   "severity": "low",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/build.ts:428-439",
+    "services/stocker/src/scan.ts:720-731",
+    "services/stocker/src/db.ts:38-48"
+   ],
+   "problem": "bundleStaged runs `SET preserve_insertion_order=true` for the join, commenting 'Nothing else is being built while a partition is joined'. The setting is global to the instance and light partitions keep building on other connections (oneAtATime serialises placement only), so their statements planned during the join run with insertion order preserved, which db.ts says turns spilling into running out of memory. Impact is small (short join window; heavy partitions hold every connection).",
+   "evidence": "Both reviewers: a SET on one connection is visible from another. First verifier on DuckDB 1.5.5: `SET SESSION preserve_insertion_order=true` on a leaves b at false; `RESET SESSION preserve_insertion_order` restores the global false.",
+   "fix": "In bundleStaged use `SET SESSION preserve_insertion_order=true` and, in finally, `RESET SESSION preserve_insertion_order`. Keep db.ts:48's global SET. Rewrite build.ts:428-432 to say the setting is turned on for this connection's session only. Update the placement docblock near scan.ts:720-728 if it still presents the setting as instance-wide state guarded by oneAtATime.",
+   "tests": "Two connections on one instance: during and after bundleStaged on one, current_setting('preserve_insertion_order') stays false on the other. Existing bundle-order tests must still pass (confirms COPY honours the session value).",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-18",
+   "title": "Text timestamps with a UTC offset are read as UTC with the offset dropped; utcOffsetHours also shifts epoch values",
+   "severity": "low",
+   "category": "correctness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/schema/project.ts:131-172",
+    "services/stocker/src/types.ts:135-141",
+    "services/stocker/src/db.ts:34-48"
+   ],
+   "problem": "microsOf's text branch is `epoch_us(TRY_CAST(_tsText AS TIMESTAMP))`, which accepts '2024-01-01T08:00:00+08:00' and drops the offset (08:00Z instead of 00:00Z) with no error; the docblock promises ISO handling. utcOf subtracts utcOffsetHours from the whole CASE, including the integral/fractional epoch branches, although types.ts says the offset is irrelevant to an epoch. The datetime branch also truncates below the microsecond while the docblock talks of rounding. Latent: the only zoned series (bybit MT4 klines, series.ts:462) writes naive dotted text and no fixture carries an offset.",
+   "evidence": "DuckDB 1.5.5: TRY_CAST('2024-01-01T08:00:00+08:00' AS TIMESTAMP) -> 1704096000000000 (08:00Z); try_strptime(...,'%Y-%m-%dT%H:%M:%S%z') -> correct; TRY_CAST(... AS TIMESTAMPTZ) also correct (ICU is built into the binding).",
+   "fix": "Restructure microsOf to take the offset and apply it only to naive text: `ELSE COALESCE(epoch_us(try_strptime(_tsText, '%Y-%m-%dT%H:%M:%S.%f%z')), epoch_us(try_strptime(_tsText, '%Y-%m-%dT%H:%M:%S%z')), epoch_us(COALESCE(TRY_CAST(_tsText AS TIMESTAMP), try_strptime(_tsText,'%Y.%m.%d %H:%M'), try_strptime(_tsText,'%Y.%m.%d %H:%M:%S'))) - <offset us>) END`, each strptime in its own epoch_us so TIMESTAMPTZ and TIMESTAMP never mix. Verify '%z' accepts 'Z', '+0800' and '+08:00' on 1.5.5 and add patterns for any that fail. utcOf returns microsOf(series.utcOffsetHours) with no outer subtraction. (Alternative from lens 2: SET TimeZone='UTC' in open() and TRY_CAST AS TIMESTAMPTZ; but then naive vs offset text cannot be told apart for utcOffsetHours series, so the explicit-strptime form is preferred.) Fix docblocks: project.ts says the datetime path truncates below the microsecond and that explicit offsets are applied; types.ts says utcOffsetHours applies only to naive datetime text. No version bump needed (no current output changes); confirm with existing projection tests.",
+   "tests": "_test_microsOf: '...+08:00' -> 1704067200000000; '...Z'; '+08:00' with fractional seconds; naive ISO unchanged; dotted '2024.11.01 00:00' unchanged; an epoch value under a utcOffsetHours series is not shifted; naive text under utcOffsetHours: 3 still shifts 3 h.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-19",
+   "title": "xlsx builds INSTALL the DuckDB excel extension from the network on every build; tests/xlsx.test.ts fails offline",
+   "severity": "low",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/formats/xlsx.ts:12",
+    "services/stocker/src/build.ts:103-110",
+    "services/stocker/src/build.ts:296-302",
+    "services/stocker/tests/xlsx.test.ts",
+    "docker/prod.node.Dockerfile:28-50"
+   ],
+   "problem": "Every build of an xlsx series runs INSTALL/LOAD excel on its connection, concurrently on several connections. The image does not pre-install it (cache in ~/.duckdb is lost on container recreate), so an egress-restricted host fails every bitget sheet partition. The test file needs extensions.duckdb.org and fails in sandboxed CI, which hides real xlsx regressions.",
+   "evidence": "`IO Error: Failed to download extension \"excel\" at URL http://extensions.duckdb.org/v1.5.5/linux_amd64/excel.duckdb_extension.gz` in the test run; 596 other tests pass.",
+   "fix": "Replace both per-build loops with a memoised `ensureExtensions(conn, format.extensions)`: a module-level Map<string, Promise<void>> running INSTALL x; LOAD x once per process (extensions are instance-wide); on failure throw `xlsx series need the DuckDB '${x}' extension, which could not be installed or loaded: ${err.message}`. Do not load it unconditionally in open() (breaks deployments with no xlsx venue). In tests/xlsx.test.ts probe INSTALL/LOAD in a module-level or beforeAll check and `describe.skipIf(!excel)` with a console.warn reason. Pre-installing in the shared Dockerfile is optional and cross-service (owner's call).",
+   "tests": "xlsx suite skips with a visible reason offline and runs online; a unit test that ensureExtensions runs INSTALL once for two calls.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-20",
+   "title": "Small-zip fast path inflates whole members in memory without checking their stated size",
+   "severity": "low",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/containers/zip.ts:56-61",
+    "services/stocker/src/containers/zip.ts:73-121",
+    "services/stocker/src/containers/extract.ts:44-62",
+    "services/stocker/src/containers/index.ts:14"
+   ],
+   "problem": "Any zip up to 32 MB compressed is read whole and every member inflated with inflateRawSync before its stated size is checked. A 30 MB CSV zip needs ~200-300 MB off-heap per extracting thread (2 pool threads plus main), outside both the node heap and DuckDB's memory_limit; a corrupt or hostile member stating GBs is unbounded.",
+   "evidence": "zip.ts:61 `statSync(absolute).size <= WHOLE_BYTES ? membersOf(readFileSync(absolute), absolute) : null`; zip.ts:116 `inflateRawSync(raw)` with the size check only after (zip.ts:118). Verifiers established the whole path is fully synchronous, so WIDTH=4 does not multiply it: peak is ~one archive per thread (~0.5 GB), not the 2.3 GB claimed.",
+   "fix": "In membersOf, first sum the central directory's stated `size`; return null (falls through to streamed, no other change needed) when it exceeds `WHOLE_INFLATED = 64 * 1024 ** 2`. Call `inflateRawSync(raw, { maxOutputLength: Math.max(1, size) })` and convert its RangeError into the existing 'corrupt zip member' error. Leave WIDTH unchanged.",
+   "tests": "A zip under 32 MB whose member states >64 MB (or a lowered cap via hook): members() returns null and unpack still produces the right file via streaming; a member whose real inflation exceeds its stated size throws.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-21",
+   "title": "Docblocks carry history and plans, make false claims, or are attached to the wrong declaration",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/schema/project.ts:95-101",
+    "services/stocker/src/schema/tables.ts:79-82",
+    "services/stocker/src/containers/index.ts:85-87",
+    "services/stocker/src/formats/types.ts:6-8",
+    "services/stocker/src/schema/margin.ts:6-10",
+    "services/stocker/src/db.ts:39-41",
+    "docs/services/STOCKER.md:656-662",
+    "services/stocker/src/formats/xlsx.ts:20-27",
+    "services/stocker/src/scan.ts:433-440",
+    "services/stocker/src/types.ts:426-441",
+    "services/stocker/src/formats/csv.ts:5-59"
+   ],
+   "problem": "CLAUDE.md requires current state only. History/plans: project.ts 'DECIMAL(38,9) is exact and was the parse here' (also written out in depth in STOCKER.md:656-662, violating one-home); tables.ts klines 'it was the one column ... early partitions held milliseconds'; containers/index.ts 'was a measurable share'; formats/types.ts 'whatever a future REST collector writes'; margin.ts 'that metadata does not exist yet. Until it does'; db.ts 'the build died at DuckDB's own memory ceiling'. False: xlsx.ts says each zip extracts to its own scratch directory (unpackAll uses one unpack-* dir per call with per-archive tags). Orphans: types.ts:426 `/** One sweep's outcome. */` sits above Spent's docblock leaving Summary undocumented; csv.ts:5-30 (the csv format's main docblock) is attached to OVERFLOW, not `export const csv` at :59; scan.ts:433-437 describes the loop at :440 but sits above unbuilt's docblock.",
+   "evidence": "Quoted lines checked by the verifier.",
+   "fix": "project.ts: 'Not DECIMAL(38,9): exact, but on one day of bybit perpetual trades (71k rows) it took 5.5 s against 0.23 s for this split, with identical results'; keep the measurement in one home (project.ts or STOCKER.md) and give the other one sentence + pointer. tables.ts: 'Its unit would be the venue's tick, not microseconds, so one dataset would mix ms and us with nothing marking the line.' containers/index.ts: 'making and removing a directory per archive is a measurable share of stocking a month of small files.' formats/types.ts: drop the future clause. margin.ts: state the rule ('one rule per venue, written from every perpetual and future symbol the catalog held on 2026-10-04') and move the instrument-metadata plan to docs/planning/. db.ts: 'Without this, a busy symbol's month (0GUSDT perpetuals, ~300 MB gzipped) reaches DuckDB's memory limit instead of spilling.' xlsx.ts: drop the scratch-directory reason (read_xlsx reading only one glob match is reason enough), or say every archive of a build extracts under one scratch directory. Move types.ts:426 above `export interface Summary`; move csv.ts:5-30 directly above `export const csv`; merge scan.ts:433-437 into the loop comment after unbuilt's declaration. (Timestamp docblocks: STK-18; spill docblock: STK-07; preserve_insertion_order: STK-17.)",
+   "tests": "None.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-22",
+   "title": "Dead code and unused exports, and a Summary.unmapped field that is never set",
+   "severity": "low",
+   "category": "code-quality",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/db.ts:57-63",
+    "services/stocker/src/ledger.ts:288-289",
+    "services/stocker/src/containers/index.ts:124-127",
+    "services/stocker/src/scan.ts:67",
+    "services/stocker/src/scan.ts:1097",
+    "services/stocker/src/scan.ts:1103",
+    "services/stocker/src/config.ts:85",
+    "services/stocker/src/types.ts:471-472",
+    "services/stocker/tests/report.test.ts:8",
+    "knip.json"
+   ],
+   "problem": "knip: countRows (db.ts; also interpolates '${glob}' without q()), distrusts (ledger.ts), the containerFor/Container re-exports, _test_wantedMonth, _test_rank, _test_parseList are unused. worker.ts and ExtractAsked are false positives (worker is loaded by path). Summary.unmapped is initialised and logged but never incremented, so operators read 0.",
+   "evidence": "`npx knip` output; `grep -rn unmapped src` matches only the initialiser and type.",
+   "fix": "Delete countRows, distrusts (keep distrusted if used), the unused _test_* exports and the containerFor re-export (check Container type use with tsc). In knip.json add `\"entry\": [\"src/index.ts\", \"src/containers/worker.ts\"]` for services/stocker. Remove `unmapped` from Summary, the initialiser (scan.ts:67) and tests/report.test.ts:8 (rather than inventing a counter; 'No series reads' is unlikely to reach build). package.json main is fixed under STK-02. Run tsc, vitest and knip afterwards.",
+   "tests": "Existing suite and knip clean.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-23",
+   "title": "bundleStaged rewrites a month that is already a single staged file unless it came from a whole batch",
+   "severity": "low",
+   "category": "efficiency",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/build.ts:393-400",
+    "services/stocker/src/build.ts:410-417",
+    "services/stocker/src/build.ts:419-439"
+   ],
+   "problem": "The docblock says a single file is the month already and is not rewritten, but build.ts:413 renames only when that file starts with '@batch.'. A month of one direct instrument (>=32 MB input, under the split size), and single-instrument side passes, are read back and re-encoded with COPY, doubling write I/O. Per-instrument staged files already have the same column order, row-group size, compression and ts sort.",
+   "evidence": "build.ts:413 `if (names.length === 1 && names[0]!.startsWith(WHOLE))`; settleFile drops empty instruments, so a single file always holds rows.",
+   "fix": "Change the condition to `if (names.length === 1)` keeping the rename and return; update the 'One batch, written whole' comment to say any single staged file is the month as it stands.",
+   "tests": "tests/build.test.ts: bundleStaged on a staging dir holding one `<SYM>.parquet` -> returned bundle has the staged file's inode; rows and column order unchanged.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-24",
+   "title": "No room to extract is counted and logged as \"not on disk\", contradicting the NO_ROOM warning",
+   "severity": "low",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/scan.ts:473",
+    "services/stocker/src/scan.ts:501",
+    "services/stocker/src/scan.ts:536-550",
+    "services/stocker/src/scan.ts:206-208",
+    "services/stocker/src/scan.ts:1051-1063",
+    "services/stocker/src/types.ts"
+   ],
+   "problem": "When fits() fails, decide continues to the next candidate; if none fits it ends at summary.missing++ and logs 'Its archives are not on disk as the catalog has them' (or the Outdated variant), after fits already logged NO_ROOM. The report then says 'N not on disk as catalogued' and an operator hunts for missing archives instead of freeing space.",
+   "evidence": "scan.ts:473 and :501 `if (! await fits(...)) continue;`; loop end at 536-548 assumes every failure means not on disk.",
+   "fix": "`let noRoom = false` in decide, set true where fits returns false; keep `continue` (another rendering may inflate to a different size and fit; the suggested `break` is not clearly right). Before summary.missing++, `if (noRoom) { summary.noRoom++; return null; }`. Add `noRoom: number` to Summary with a docblock ('On disk, but there was no room to extract it this sweep'), initialise it, and give it its own clause in report() ('N waiting for room to extract').",
+   "tests": "Sweep with config.minFreeGb (or shortOf stubbed) so one partition is short -> missing 0, noRoom 1, one NO_ROOM warning, no 'not on disk' log.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-25",
+   "title": "edgesOnDisk lists each neighbour partition from disk twice",
+   "severity": "low",
+   "category": "efficiency",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/src/scan.ts:592-602",
+    "services/stocker/src/disk.ts:62-67"
+   ],
+   "problem": "For each edge, edgesOnDisk calls filesOf for matches() and then edgeFilesOf, which calls filesOf again: a second readdir+stat over every instrument directory of the neighbour (thousands for per-instrument datasets).",
+   "evidence": "disk.ts:66-67 and scan.ts:596-598. (The claim that decide calls edgesOnDisk twice per candidate is wrong: lines 453 and 456 are mutually exclusive branches.)",
+   "fix": "`const all = await filesOf(edge.partition.key, instruments); if (! matches(all, edge.partition)) return null; donated.set(edge.end, all.filter(found => edgesOf(found.file)[edge.side]));` (import edgesOf from './keys'). Remove edgeFilesOf (only use) or make it take a DiskFile[].",
+   "tests": "Existing arrived-neighbour sweep tests must pass.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-26",
+   "title": "Test isolation: fixed /tmp paths shared across concurrent runs, and clock-based waits",
+   "severity": "low",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/stocker/tests/setup.ts:8-17",
+    "services/stocker/tests/prepare.test.ts:42",
+    "services/stocker/tests/sweep.test.ts:152-163"
+   ],
+   "problem": "setup.ts derives /tmp/stocker-test-vault-${VITEST_POOL_ID} and archives dirs only from the pool id, so two concurrent runs on one host (several agents in this tree) share and rm -rf each other's directories. prepare.test.ts waits for background extraction with setTimeout(150), flaky under load.",
+   "evidence": "setup.ts:10-11; prepare.test.ts:42 `settled = ... setTimeout(resolve, 150)`.",
+   "fix": "setup.ts: `const root = mkdtempSync(join(tmpdir(), `stocker-test-${process.pid}-${worker}-`))`; DATA_VAULT_DIR=join(root,'vault'), DATA_ARCHIVES_DIR=join(root,'archives'); afterAll rmSync(root, { recursive: true, force: true }). prepare.test.ts: replace settled()+expect with `await vi.waitFor(() => expect(held()).toBeGreaterThan(0), { timeout: 5000 })` and similar for other uses. Do not add _test_reset to src/prepare.ts; wrap each test's Prefetch in try/finally release() if needed. (xlsx gating: STK-19.)",
+   "tests": "Run two `vitest run` instances concurrently; both pass.",
+   "owner_question": ""
+  },
+  {
+   "id": "STK-27",
+   "title": "Splitting by instrument rescans the whole temporary table once per instrument",
+   "severity": "low",
+   "category": "efficiency",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/build.ts:319-325",
+    "services/stocker/src/build.ts:355-377",
+    "services/stocker/src/build.ts:818-844"
+   ],
+   "problem": "writeSplit and batchFrom create unclustered temp tables and issue one COPY ... WHERE _instrument/_sym = X per instrument, a full scan each, O(instruments x rows). It matters on the direct path for many-instrument groups (bybit option trades per underlying, OKX chains/all* bundles).",
+   "evidence": "Synthetic worst case: 17.2 s unclustered vs ~3 s clustered (500 interleaved instruments). Verifier measured realistic shapes: batch layout (256 per-instrument files) no gain from clustering (rows already arrive contiguous); option contracts sharing long prefixes 1673 ms vs 1338 ms (string zone maps keep a short prefix). 'Hours' claim unsubstantiated.",
+   "fix": "Measure first: log per-instrument COPY count and wall time for a bybit option month and an OKX option chain month. Do not add ORDER BY to batchFrom's CTAS. If worth it for writeSplit, prefer one `COPY (SELECT ... ORDER BY _instrument, ts) TO dir (FORMAT PARQUET, PARTITION_BY (_instrument))` then rename each partition file to <instrument>.parquet and run settleFile per file, only after verifying DuckDB 1.5.5 keeps ORDER BY order inside each partition file with preserve_insertion_order=false; marginColumn would become a CASE over instruments.",
+   "tests": "Byte-identical output (rows and order) before/after on a multi-instrument fixture.",
+   "owner_question": "Is the per-instrument COPY cost significant on real bybit option / OKX chain months? Approve a measurement run, and the PARTITION_BY rewrite only if it is."
+  },
+  {
+   "id": "STK-28",
+   "title": "A side's revision ignores the version of the series that reads the neighbour's files (era cuts)",
+   "severity": "low",
+   "category": "correctness",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/vault.ts:85-105",
+    "services/stocker/src/versions.ts:40-47",
+    "services/stocker/src/scan.ts:319",
+    "services/stocker/src/scan.ts:393",
+    "services/stocker/src/series.ts:945-946"
+   ],
+   "problem": "revisionOf folds in versionsOf(key.table, series, key.month), but a month's .pre/.post side is read by the series of the neighbour's month (seriesFor uses file.month). At an era cut (htx HTX_CUT='2026-02', spill 'back'), January 2026's post side is written by the from-2026-02 series; bumping that series' version does not move January's revision, so its side keeps the old projection. Latent: no htx entry has a version today.",
+   "evidence": "versions.ts:40-47 filters by month = key.month; vault.ts:101 hashes only edge.partition.version for edges.",
+   "fix": "If done, keep every existing revision stable: for each edge compute theirs = versionsOf(key.table, series, edge.partition.key.month) and only when it differs from the month's own list add `hash.update(`${edge.partition.id}\\nversions\\n${theirs.join(',')}\\n`)`. Do NOT bump EVERY (would outdate the whole vault, possibly permanently). No stored revision moves today since lists are identical at every cut.",
+   "tests": "vault.test.ts: two series split by from/until, later one versioned; a month with an edge into the later era changes revision when only the later version changes; a month with no or same-era edges keeps a golden revision.",
+   "owner_question": "Should side revisions track the neighbour-era series version (safe, revision-stable variant), or is it acceptable to require a manual restock when an era-cut series is re-versioned?"
+  },
+  {
+   "id": "STK-29",
+   "title": "SIGTERM exits immediately mid-placement; DuckDB connections are never closed",
+   "severity": "low",
+   "category": "robustness",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/index.ts:50-90",
+    "packages/service-kit/src/plugins/shutdown.ts:24-35",
+    "services/stocker/src/db.ts",
+    "services/stocker/docker/compose.yml"
+   ],
+   "problem": "Stocker registers no shutdown listener, so docker stop/restart goes straight to process.exit(0), whatever is in flight; open()'s close is discarded (index.ts:59). Impact is overstated by the reviewer: the vault-touching window is metadata-only renames, the same window exists for SIGKILL/OOM and is covered by the ledger mark + startup repair, and losing an in-flight piece is by design.",
+   "evidence": "index.ts `const { conns } = await open();`; shutdown plugin awaits listeners then exits.",
+   "fix": "If implemented, keep it narrow: module-level `stopping` flag and a `placing` promise set only from mark(...) through the final ledger write (not the joins); export stop() that makes following() return null, refuses to start mark once stopping, awaits placing. index.ts keeps close and registers `SK.on('shutdown', async () => { await Promise.race([stop(), timeout(8000)]); close(); })`. Optionally stop_grace_period: 30s.",
+   "tests": "sweep.test.ts: start a placement, call stop() mid-way; ledger and vault consistent with no 'changing' mark left.",
+   "owner_question": "Do you want a graceful drain on planned restarts? If so: what to wait for (placement only, not joins), the timeout, and the compose stop_grace_period."
+  },
+  {
+   "id": "STK-30",
+   "title": "Duplicated build logic and oversized decide/stock/build.ts",
+   "severity": "low",
+   "category": "code-quality",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/build.ts:67-89",
+    "services/stocker/src/build.ts:244-265",
+    "services/stocker/src/build.ts:103-110",
+    "services/stocker/src/build.ts:296-302",
+    "services/stocker/src/build.ts:361-377",
+    "services/stocker/src/build.ts:828-844",
+    "services/stocker/src/build.ts:410",
+    "services/stocker/src/build.ts:570",
+    "services/stocker/src/build.ts:902-905",
+    "services/stocker/src/scan.ts:379-551",
+    "services/stocker/src/scan.ts:621-879",
+    "services/stocker/src/scan.ts:882-885",
+    "services/stocker/src/vault.ts:64-65",
+    "services/stocker/src/vault.ts:206-207",
+    "services/stocker/src/formats/csv.ts:56-57",
+    "services/stocker/src/formats/words.ts:50-51"
+   ],
+   "problem": "Input inspection and the INSTALL/LOAD loop are written twice (buildGroup, batchFrom); the per-instrument COPY+settleFile loop twice (batchFrom, writeSplit); staged-name listing four times; declared() in csv.ts and words.ts; labelFor derives partition extras itself instead of using extrasOf (could diverge from labelOf). decide (~170 lines) and stock (~260) use continue/fall-through control flow that caused STK-03/05/24; build.ts is 986 lines mixing reading, writing, joining, pieces and scratch.",
+   "evidence": "Compare build.ts:67-89 with 244-265 and 361-377 with 828-844. No behavioural divergence found yet (the NULL-instrument difference in STK-09 is a different design, not drift).",
+   "fix": "Bounded helpers that can be done as separate commits with tests unchanged: (a) stagedNames(dir) exported from vault.ts used by stagedIn, publishSplit, bundleStaged, dropOverlap; (b) loadExtensions (subsumed by STK-19's ensureExtensions); (c) writePerInstrument(conn, key, table, column, staging, prefix, exclude); (d) labelFor built from labelOf's parts via extrasOf; (e) move declared to formats/types.ts. Owner-scheduled: shared inspectInputs, splitting build.ts into read.ts/join.ts/pieces.ts, and splitting decide into completionJob()/stockJob() returning Job | null | 'skip' and stock into smaller functions.",
+   "tests": "Existing suite unchanged and passing after each step.",
+   "owner_question": "Do the module split of build.ts and the decide/stock restructuring now, as part of the pre-feature 'fresh start' (it overlaps the planned new functionality), or after STK-01/03/05 land? Approve the small helpers (a,c,d,e) now?"
+  },
+  {
+   "id": "STK-31",
+   "title": "Each extracted file is inspected one at a time before a read",
+   "severity": "low",
+   "category": "efficiency",
+   "decision": "SKIP",
+   "locations": [
+    "services/stocker/src/build.ts:79-88",
+    "services/stocker/src/build.ts:253-264",
+    "services/stocker/src/formats/index.ts:34-46"
+   ],
+   "problem": "buildGroup/batchFrom await hasContent and formatOf per input serially (gunzip probe, 4-byte read).",
+   "evidence": "Reviewer benchmark: 5,000 cached gz files 1,788 ms serial vs 968 ms at 16-wide.",
+   "fix": "None now. If profiling shows inspection on the critical path: flatten (input,path) pairs and run hasContent/formatOf with bounded concurrency (8-16) as in disk.ts:33-56, keeping the gunzip probe for every .gz.",
+   "tests": "None.",
+   "owner_question": ""
+  }
+ ],
+ "rejected": [
+  {
+   "title": "Rows of one instrument written by two tasks overwrite each other (lens 1 F9)",
+   "reason": "Only verifier was uncertain (counts as half a refutation vs zero confirmations): mechanism exists (unconditional rename in settleFile) but no realistic case found, since bundles, chains and per-underlying files are separate partitions. An EEXIST guard via link() is cheap and may be added optionally alongside STK-09."
+  },
+  {
+   "title": "Zips up to 32 MB inflated 8 at once (~2 GB RSS) (lens 2 F18, and the concurrency arithmetic of lens 1 F11)",
+   "reason": "Refuted: the whole-read path is synchronous, so WIDTH=4 does not overlap them; peak is ~one archive per thread. Residual bounded risk kept as STK-20."
+  },
+  {
+   "title": "Allow-list regex for instrument names (lens 1 F8 suggested fix)",
+   "reason": "Harmful: omits '_' and would reject every gate instrument (BTC_USDT); replaced by a deny-list in STK-09."
+  },
+  {
+   "title": "Bump EVERY after hashing edge versions (lens 1 F16 suggested fix)",
+   "reason": "Harmful: would outdate the whole vault, possibly permanently where archives are gone; STK-28 uses a revision-stable variant."
+  },
+  {
+   "title": "Hash margin rules into revisionOf (lens 2 F22 'better still')",
+   "reason": "Contradicts versions.ts (bump for output changes, never for code changes); a refactor would restock a venue. STK-14 extends the test digest instead."
+  },
+  {
+   "title": "Stopgap found.length === files + withdrawn (lens 1 F2 option b)",
+   "reason": "Withdrawn bytes are not counted and a never-downloaded withdrawn file is not on disk, so the count proves nothing and still builds withdrawn rows."
+  },
+  {
+   "title": "Add 'engine' next to STAGE in sweepScratch (lens 2 F7 fix)",
+   "reason": "Would keep the spill instead of removing it; sweepScratch already removes everything but STAGE."
+  },
+  {
+   "title": "Test suite depends on not running as root (lens 1 F18 title)",
+   "reason": "No stocker test depends on uid; the root-dependent test is prospector's."
+  },
+  {
+   "title": "decide calls edgesOnDisk twice per candidate (part of lens 2 F16)",
+   "reason": "The two call sites are mutually exclusive branches."
+  },
+  {
+   "title": "Use break after a failed fits() (lens 2 F14 fix)",
+   "reason": "Another rendering may inflate to a different size and fit; STK-24 keeps continue and fixes the miscount."
+  }
+ ]
+}

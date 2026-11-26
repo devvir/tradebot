@@ -1,0 +1,536 @@
+{
+ "unit": "docs-prospector-1",
+ "assessment": "The three docs in scope (docs/services/PROSPECTOR.md lines 1-1500, services/prospector/README.md, and the seeds README) describe the design in depth, but they mix the current state with history from several earlier designs and contradict themselves in places. One documented config example stops the service when copied (bitget in the walk schedule). Several statements about core behaviour are wrong today: listing venues do reconcile against instrument listings through the preamble; series.first and series.last are maintained and corrected by reconcile; prospector does not serve the listing (the catalog service opens the DB read-only and does); the walk cadence is days of the month with a 24h guard, not weekday/72h; there are no 'probe' run rows, month.state, wip.id, tagOf, src/api/routes.ts or venues/ folder. The seeds README predates the htx, gate and binance retirement seeds, and its series.csv example makes seed.ts throw. Beyond the factual errors, the docs break CLAUDE.md throughout: history narration on almost every page, provider docs framed around consumers, the same subjects at full depth in three or four places, and terms ('partition', 'run', 'revision') that clash with VOCABULARY.md. Code docblocks carry the same drift. All 26 findings were confirmed by the verifier. Four had their severity lowered (the two 'high' findings to medium), and none was refuted. Every item is a bounded docs change, so every item is IMPLEMENT. The few code or tuning questions that come up are recorded as owner questions, not blocking deferrals. Recommended restructure for the fresh start: (1) The README becomes a one-screen operator page: what it is, env vars, the /data/catalog mount, ports (8080 private API, 3000 health), the walk-schedule file with a correct example, adding a venue, and a link to PROSPECTOR.md. (2) PROSPECTOR.md (about 3,000 lines) is rewritten as a present-tense reference of at most 800-1,000 lines: What it writes (tables owned, single writer, pointer to schema.ts); Adapters and scanners (one hook table); Passes (passFor order, walk schedule, enrolment/pause/forced update); Walking; Updating (generation, preamble, backfill, bounds, reconcile); Probing (wip, confirmations, ruleOnFailure/notFoundCodes, seq order); Pacing and transport; the private API. Use 'scope' for the walk unit and reserve 'partition' for slice x month. Move venue facts (refusal evidence, publication delays) to docs/venues/*, and the motivation material to docs/modules/ARCHIVES.md. (3) The seeds README is the single home for the seed format and research vs permanent seeds; PROSPECTOR.md and BITGET-SEED.md keep pointers only. (4) Sweep code docblocks for history and contradictions (types.ts Occasion, seed.ts header, collector venue-table claim, schema run.kind, survey.ts unknown-shape claim, sync.ts 'A walk never reconciles'). Seen outside scope, to hand to the relevant units: compose.yml has an orphan comment about an HTTP/1.1 connection ceiling; GATE.md and BINANCE.md describe what 'the catalog' places or refuses; BYBIT.md:262 and BINANCE.md:34 cite the non-existent tagOf; docs/planning/CATALOG.md 'Slices and partitions' carries dated history (2026-10-04 conversion). A scratch link checker exists at reviews/2026-11/units/scratch/links-prospector.py.",
+ "items": [
+  {
+   "id": "DPR1-01",
+   "title": "PROSPECTOR.md says a listing venue has no reconciliation step, which is false and contradicts the doc itself",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:526-546",
+    "docs/services/PROSPECTOR.md:142",
+    "docs/services/PROSPECTOR.md:228-233",
+    "docs/services/PROSPECTOR.md:353-356",
+    "services/prospector/src/sync.ts:306"
+   ],
+   "problem": "Lines 532-546 say a listing venue discovers only by walking, with no reconciliation step, 'by decision', so a new symbol is found only at the next full refresh. Every listing adapter has an `instruments` hook, and the preamble runs at the start of every fresh update of any venue. The same doc says the opposite at 142, 228-233 and 353-356. Line 528 ('on every pass') is also imprecise: the preamble is skipped on a resumed update and never runs on a walk.",
+   "evidence": "instruments hooks: binance.ts:35, bybit.primary.ts:35, bybit.secondary.ts:39, gate.ts:43, htx.ts:31, kucoin.ts:27. sync.ts:306 `if (doing === 'partial' && updateStarted(db, venueId) === null) { const found = await preamble(...)`. preamble.ts:25-29 creates series for newly listed instruments, marks departed ones delisted, and backfills them.",
+   "fix": "Under '### Where new instruments come from' (518): delete 532-546. Rewrite 526-530 as one short paragraph, true for every venue with an `instruments` hook, listable or not: at the start of each fresh update, but not on a resume and not on a walk, the preamble asks the venue what it lists. It creates a series per live pattern of the instrument's market, marks departed instruments `delisted`, and backfills the missing bounds. Point to '### The preamble: asking the venue what it lists' (~2770) for the detail and make sure the two agree, including the case where the preamble refuses a listing whose names do not match the files (sync.ts:310-313). Keep 228-233 and 353-356.",
+   "tests": "None (docs-only).",
+   "owner_question": "",
+   "source_finding": "F2",
+   "verifier_notes": "Both reviewer and verifier confirmed. Verifier lowered severity from high to medium: a doc contradiction with no runtime effect, though it misdescribes a core mechanism."
+  },
+  {
+   "id": "DPR1-02",
+   "title": "The documented walk-schedule example names bitget, which stops the service at startup",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/README.md:117",
+    "docs/services/PROSPECTOR.md:1232",
+    "services/prospector/src/schedule.ts:16"
+   ],
+   "problem": "All three docs give `bitget: 1,10,20` as an example walk-schedule line. bitget is `listable: false`, and loadSchedule throws for any venue that cannot be listed. index.ts then logs 'The walk schedule cannot be used' and calls process.exit(0), so the service stops on every start and, because the exit is clean, is never restarted. The example also contradicts the rule printed right after it ('Only a venue that can be listed may be named').",
+   "evidence": "adapters/bitget.ts:18 `listable: false`; schedule.ts:58-59 throws \"'${venue}' cannot be listed...\"; index.ts:98-103 calls process.exit(0). Reproduced by the reviewer. walk-schedule.example.yaml already uses `kucoin: 1,10,20`.",
+   "fix": "Replace `bitget: 1,10,20` with `kucoin: 1,10,20` in README.md:117, PROSPECTOR.md:1232 and the yaml block in the schedule.ts docblock (line 16), matching walk-schedule.example.yaml. Optionally, in the README, name okx and bitget as the venues that cannot be named.",
+   "tests": "Optional: a schedule.test.ts case that runs loadSchedule on the README's example lines and expects no throw.",
+   "owner_question": "",
+   "source_finding": "F1",
+   "verifier_notes": "Verifier lowered severity from high to medium: the log names the venue, the operator can diagnose it quickly, and nothing is lost."
+  },
+  {
+   "id": "DPR1-03",
+   "title": "Docs describe `series.first` and `series.last` wrongly: last is said to be unmaintained, and first to be moved only by sawFile",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:259-267",
+    "services/prospector/src/database/migrations/seeds/README.md:90-97",
+    "services/prospector/src/database/migrations/seeds/README.md:138-139",
+    "services/prospector/src/sync.ts:356"
+   ],
+   "problem": "PROSPECTOR.md:264 says '`last` is not maintained at all. It says nothing more will ever be published'. Line 261 says '`sawFile` is the only thing that moves it'. Seeds README:91 says 'Nothing ever raises a `first`'. In the code, sawFile widens both bounds, and reconcile, which runs at the end of every finished pass, resets both to what `file` holds. Seeds README:138-139 gives the correct meaning of `last`, so the two docs contradict each other. The seeds README's argument for leaving `first` out of a seed ('uncorrectable the moment it is too low') no longer holds. The code comment at sync.ts:356 ('A walk never reconciles') is also stale against sync.ts:391-405.",
+   "evidence": "catalog/series.ts:414-422 (sawFile lowers first and raises last); :653-676 reconcile sets both to the real min and max ('the only way one ever comes back in'); sync.ts:405 calls reconcile at the end of every finished pass; update.ts:62-64.",
+   "fix": "PROSPECTOR.md:259-267: replace both paragraphs with a short statement. `first` and `last` are the earliest and newest file the catalog holds for the series. A sighting widens them (`sawFile`), and a finished pass resets both to what `file` holds (`reconcile` in catalog/series.ts), which is how a withdrawal narrows them. `last` is never a ceiling on generation. Point to '### The three bounds a series carries' (~2498) and '### A sighting states the bounds; a finished pass checks them' (~2579). Seeds README:90-97: a seed carries no `first` because the first pass measures it, and reconcile would replace any seeded value anyway; a seed states a `floor` instead. Remove 'Nothing ever raises a `first`' and the 'uncorrectable' argument. Fix the comment at sync.ts:356 so it matches 391-405.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F4",
+   "verifier_notes": "Confirmed. The verifier added the stale comment at sync.ts:356."
+  },
+  {
+   "id": "DPR1-04",
+   "title": "PROSPECTOR.md says prospector serves the listing and is the only thing that opens the database",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:26-28",
+    "services/prospector/README.md:56-57",
+    "docs/services/CATALOG.md:12-14"
+   ],
+   "problem": "PROSPECTOR.md:26-28 says prospector 'serves the listing. Nothing else opens the database.' Prospector serves no listing. The catalog service opens the same file read-only and serves the listing. README:56-57, CATALOG.md:12-14 and PROSPECTOR.md:2137-2138 all contradict this passage.",
+   "evidence": "Prospector's only routes are in api/collector.ts:17-26, lenses.ts:28 and reports.ts:12. services/catalog/src/database.ts:26 `new DatabaseSync(path, { readOnly: true })`.",
+   "fix": "Replace PROSPECTOR.md:26-28 with: 'Prospector writes the catalog database and is its only writer. It establishes what each venue publishes and keeps that current. The catalog service opens the same file read-only and serves the listing; see [CATALOG.md](CATALOG.md).' The link is a pointer, not an explanation, which CLAUDE.md permits.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F5",
+   "verifier_notes": "Confirmed at medium."
+  },
+  {
+   "id": "DPR1-05",
+   "title": "`Occasion` and pass selection are described wrongly in PROSPECTOR.md, and the types.ts docblock says the opposite",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:165-178",
+    "services/prospector/src/types.ts:349-362",
+    "services/prospector/src/survey.ts:124-127"
+   ],
+   "problem": "The doc says 'full' and 'partial' both reach the venue and that reconciling against the instrument listing happens there. No adapter's getContext contacts a venue, and none reads `occasion`. Reconciliation is the preamble, run only at the start of a fresh update. The doc also says the pass is decided 'never by what a caller asked for', but passFor's second rule is the caller's forced update. The types.ts docblock says the reverse ('Decided by the request, not by the state') and carries a history sentence. survey.ts:124-127 narrates history too.",
+   "evidence": "Listing adapters' getContext returns `listing(x)` (binance.ts:15, kucoin.ts:15, htx.ts:16, gate.ts:16, bybit.primary.ts:15, bybit.secondary.ts:14); bitget.ts:24-28 builds an address; okx.ts:20-26 reads catalog rows. sync.ts:456-470 passFor order: listable===false -> partial; occasion==='partial' -> partial; phase!=='updating' -> full; updateOpen -> partial; else walkIsDue. collector.ts:133 maps update:true to 'partial'.",
+   "fix": "PROSPECTOR.md:165-178: `occasion` is what a caller passes to getContext. 'full' and 'partial' build the context for a walk or an update pass. 'lookup' is for confirming one key inside a request, and the adapter must reach no venue for it. State that no adapter's getContext contacts the venue. Then list passFor's order: an unlistable venue always updates; a forced update (`update: true`) is an update; a venue not yet complete walks; an open update is finished; otherwise the walk schedule decides. Say that reconciliation is the preamble's job, run only at the start of a fresh update, and point to that section. Remove 'never by what a caller asked for'. types.ts:349-362: drop the reconciliation sentence, replace 'Decided by the request, not by the state' with a pointer to passFor, and delete 'An earlier version...'. survey.ts:124-127: delete the history sentence.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F22",
+   "verifier_notes": "Confirmed. The verifier also flagged the walkOn/weekday/72h passage, which is DPR1-17."
+  },
+  {
+   "id": "DPR1-06",
+   "title": "The PROSPECTOR.md source map and 'adding a venue' steps name files and directories that do not exist",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:100-124",
+    "docs/services/PROSPECTOR.md:312-313",
+    "docs/services/PROSPECTOR.md:2137",
+    "services/prospector/README.md:82-87",
+    "services/prospector/src/venues.ts:54"
+   ],
+   "problem": "The file map lists `src/api/routes.ts`, which does not exist. It also leaves out many files with real behaviour: schedule, lenses, reports, collector, deliver, transport/transport.worker, lookup, canonical, exclusions, metadata, counts, pool, timings, etag, faults, config, service, scanners/pages.ts and adapters/declare.ts. Lines 312-313 say a new venue 'adds one file in `venues/`', but there is no such directory, and the line omits the required venue row. README calls the place for that row 'the venues migration', but the rows are the VENUES constant in 001-core.ts. Line 2137 says the schema is in src/catalog/; it is in src/database/schema.ts.",
+   "evidence": "`ls src/api` -> collector.ts index.ts lenses.ts reports.ts; there is no src/venues/. venues.ts:50-54 throws 'No venue row for ...'; the rows are in 001-core.ts:48-57.",
+   "fix": "Regenerate the file map (100-124) from `ls src src/*` with one line per file and no per-file prose that repeats docblocks, and change `src/api/routes.ts` to `src/api/` (index.ts mounts collector, lenses and reports). Replace 312-313 with a pointer to the README. Make README:82-87 the one home for 'adding a venue': an adapter in src/adapters/, a line in src/venues.ts, a row in VENUES in src/database/migrations/001-core.ts, and a scanner in src/scanners/ only for a new platform. Fix PROSPECTOR.md:2137 to `src/database/schema.ts`. Optionally make the error text at venues.ts:54 name 001-core.ts.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F6",
+   "verifier_notes": "Confirmed at medium."
+  },
+  {
+   "id": "DPR1-07",
+   "title": "The seeds README and the seed.ts docblock cover only okx and bitget; the htx, gate and binance seeds are missing",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/src/database/migrations/seeds/README.md:3-10",
+    "services/prospector/src/database/migrations/seeds/README.md:14-25",
+    "services/prospector/src/database/migrations/seeds/README.md:27-32",
+    "services/prospector/src/database/migrations/seeds/README.md:150-154",
+    "services/prospector/src/database/migrations/seeds/seed.ts:13-17"
+   ],
+   "problem": "The README presents seeds as being only for venues nothing can discover (okx, bitget). htx (90 shapes), gate (21) and binance (8) also ship pattern.csv seeds carrying `retired_at`, wired up by migrations 002, 005 and 006. The Layout block and the retired_at bullet leave them out. The seed.ts docblock says 'Adding a third such venue is a directory, not a migration', which contradicts README:27-28 and migrations/index.ts. README:32 says 'Both files', but there are three file kinds.",
+   "evidence": "`ls seeds` -> binance bitget gate htx okx seed.ts README.md. Migrations 002-htx.ts:24-26, 005-gate.ts:31-34 and 006-binance.ts:32-36 each call seed(db, '<venue>').",
+   "fix": "Intro: a seed carries what reading the archive cannot establish. For a venue with no listing (okx, bitget) that is its patterns, series, floors and transforms. For a listed venue (htx, gate, binance) it is pattern rows with `retired_at` for shapes that have stopped being written. Layout: all five directories with their files (binance, gate and htx: pattern.csv; okx: pattern+series; bitget: pattern+series+transform). Change 'Both files' to 'Each file is one of the catalog's tables'. The retired_at bullet: say what kinds of shapes carry it, with examples, not an exhaustive per-venue list. seed.ts docblock: drop 'for venues nothing can discover', say a new seed is a directory plus a one-line MIGRATIONS entry calling seed(db, '<venue>'), and point to the README.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F12",
+   "verifier_notes": "Confirmed. Deleting the htx, gate or binance seeds as 'stale' would bring back nightly generation for the retired shapes."
+  },
+  {
+   "id": "DPR1-08",
+   "title": "The seeds README examples are wrong: the series.csv row fails to load and the pattern.csv row is out of date",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/src/database/migrations/seeds/README.md:38-41",
+    "services/prospector/src/database/migrations/seeds/README.md:61-66"
+   ],
+   "problem": "The series.csv example has a 5-column header and a 6-field row (`1,$AIUSDT,,,,20180502`), and seed.ts rows() throws on any such line. The pattern.csv example uses a literal `_001` and has no `archivesMarket`/holds column. Current shapes use `{PART}`, which the README never mentions, although 8 bitget and 3 gate patterns use it.",
+   "evidence": "seed.ts:261-263 throws '<venue>/<table>.csv line N has X fields, not Y'. bitget/pattern.csv:35 `34,spot,trades,,trades/SPBL/{SYMBOL}/{SYMBOL}_SPBL_{YYYY}{MM}{DD}_{PART}.zip,daily,20240418,spot`.",
+   "fix": "Series example: take a real row, e.g. okx/series.csv `1,AAOI-USD_UM_XPERP,,20260804,20260709`, or use `1,$AIUSDT,,,20180502`, and say an empty `last` means not measured. Pattern example: copy a current row verbatim with its header (okx line 2 or bitget line 36). Add a short list of the slots a pattern may carry: {SYMBOL}, {YYYY},{MM},{DD},{HH},{MI},{MONTH_LAST_DAY}, {PART} and {TRANSFORM:kind:default}. Point to the schema.ts pattern comment or PROSPECTOR.md#a-period-published-in-parts for {PART}.",
+   "tests": "Optional: a test that extracts the README's CSV examples and runs them through seed.ts rows().",
+   "owner_question": "",
+   "source_finding": "F13",
+   "verifier_notes": "Confirmed."
+  },
+  {
+   "id": "DPR1-09",
+   "title": "The docs say a new dataset is catalogued 'without being named anywhere'; it is found by descent but lands in `unreadable`",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/README.md:29-33",
+    "docs/services/PROSPECTOR.md:604-616",
+    "services/prospector/src/survey.ts:1126-1133"
+   ],
+   "problem": "Both docs say an unknown dataset is catalogued the first time it is surveyed, citing binance's option/, BVOLIndex, EOHSummary and aggTrades. Descent does find the tree. But a file becomes a series only if the adapter's inspectUrl recognises it, and binance names those datasets explicitly in MEANINGS. Unrecognised files go to `unreadable` (reason 'unread'), not to `file`. The survey.ts:1130-1132 docblock ('The file is still catalogued if it carries a date') contradicts the code below it.",
+   "evidence": "binance.ts:102-128 MEANINGS; canonicalise returns null for an unknown dataset; survey.ts:1135 pushes it to unread; survey.ts:1156-1173 skips it; schema.ts:190-203 `unreadable`.",
+   "fix": "README:29-32: 'The prefix tree is discovered by descent, so a dataset no adapter knows is still found on the first walk. Its files are recorded in `unreadable` until the adapter's inspectUrl learns to place them, and the next walk then catalogues them.' PROSPECTOR.md:604-616: keep the descent example, but say that cataloguing needs the adapter's reader (MEANINGS for binance). Fix the survey.ts:1126-1133 docblock to match 1159-1173.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F21",
+   "verifier_notes": "Confirmed. The verifier added the survey.ts docblock contradiction."
+  },
+  {
+   "id": "DPR1-10",
+   "title": "The exclusion tables in PROSPECTOR.md are incomplete and duplicate the venue docs and adapter docblocks",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:930-939",
+    "docs/services/PROSPECTOR.md:941-957",
+    "docs/services/PROSPECTOR.md:955",
+    "docs/services/PROSPECTOR.md:960",
+    "docs/services/PROSPECTOR.md:975",
+    "docs/venues/GATE.md:247-266",
+    "docs/venues/BINANCE.md:179-213"
+   ],
+   "problem": "(1) The heading says 'Three suffixes', but ANYWHERE lists four. (2) The binance rows give only data2/ and bare data3/. They omit the `/`-prefixed tree and the 1w/3d/1mo intervals, which BINANCE.md documents as refused. (3) Each venue's refusals are written at depth in three places (this table, the `accepts` docblock, the venue doc), and the copies have drifted. GATE.md says the exclusion table holds two files for gate, but 001-core ships the 85-row SPOT_AT_A_FUTURES_URL list too. GATE.md omits the seven-tree allow-list and the futures_btc non-*_USD rule. PROSPECTOR.md's s3deals row is more general than gate.ts. (4) Three GATE.md anchors in this section are broken.",
+   "evidence": "paths.ts:72-77 ANYWHERE has 4 entries. binance.ts:27-32 refuses ^/, ^data2/, ^data3/[^/]+$ and /(1w|3d|1mo)/. 001-core.ts:115 SPOT_AT_A_FUTURES_URL. gate.ts:236 TREES; gate.ts:244-248 s3deals. The reviewer's link checker found the broken anchors at PROSPECTOR.md lines 955, 960 and 975.",
+   "fix": "Change 'Three suffixes' to 'Four suffixes'. Cut the per-venue 'Refused by a venue's accepts' and 'Named in the exclusion table' tables to one line per venue, pointing at the venue doc (the facts) and the adapter's accepts docblock (the rule). Keep only the three-tier model (excludedAnywhere / accepts / exclusion table) and the cross-venue `.csv` reasoning. Before cutting, move reasoning that exists only here into the venue docs, worded as venue facts with no service names: the htx 2026-02-01 overlap, the htx remark.txt files, kucoin's futures 1d five-of-six fields, bybit's bare root keys. Fix GATE.md 'What is refused, and where': add the seven-tree allow-list and the futures_btc rule, and say the exclusion table holds the two zero-byte files plus the 85 2021-07 futures_usdt/trades files. Fix the anchors to #keys-filed-at-the-wrong-depth, #the-trees-and-which-are-dead and #2021-07-spot-data-at-the-futures-url. If the table is kept instead, add the missing binance rows and narrow the s3deals row to `spot/candlesticks_1d/201802/s3deals/`.",
+   "tests": "None. Run the scratch link checker (scratchpad/reviews/scratch/links-prospector.py) after editing.",
+   "owner_question": "",
+   "source_finding": "F15",
+   "verifier_notes": "Confirmed. The verifier found extra drift in GATE.md. The anchor fixes come from the reviewer's notes."
+  },
+  {
+   "id": "DPR1-11",
+   "title": "'partition', 'run' and 'revision' mean different things in PROSPECTOR.md than in VOCABULARY.md",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:693-695",
+    "docs/services/PROSPECTOR.md:781",
+    "docs/services/PROSPECTOR.md:807",
+    "docs/services/PROSPECTOR.md:992-996",
+    "docs/services/PROSPECTOR.md:1300-1303",
+    "docs/services/PROSPECTOR.md:756",
+    "docs/VOCABULARY.md:62-71",
+    "docs/VOCABULARY.md:97-98"
+   ],
+   "problem": "VOCABULARY.md defines Partition as one month of a slice, which is the `partition` table. PROSPECTOR.md uses 'partition' about 70 times for a walk scope (a key prefix with a cursor, a `run` row), and at 781 for the slice-month meaning. VOCABULARY's Run belongs to the venue across hosts, while `run` rows are per server (bybit has two). VOCABULARY's Revision is a vault stocking identity, while the `revision` table holds a file's previous size and ETag. Code identifiers mix the two meanings too (refinePartition and openPartitions for scopes, PartitionDelta for slice-months).",
+   "evidence": "schema.ts:220 `run` (per venue_id, i.e. per host); schema.ts:322-332 `partition` (slice_id, month); schema.ts:159 `revision`.",
+   "fix": "Add one short terminology note near the top of the Jobs / 'What a survey does' section. A walk scope is a key prefix with a cursor and a `run` row, not VOCABULARY's partition (slice x month, the `partition` table). `run` rows are per server, and a pass over a venue is a job, which corresponds to VOCABULARY's Run. In the prose, replace 'partition' with 'scope' where it means a run row. Do this by hand, not with sed. Keep 'partition' where it means slice-month and link VOCABULARY. Qualify 'revision' as 'the file's previous version (`revision` table)'. Do not rename code identifiers in this pass.",
+   "tests": "None.",
+   "owner_question": "Optional: should code identifiers (openPartitions, refinePartition, partitionId for run scopes) be renamed to 'scope' later, so code and docs agree? That is a code decision outside this docs pass.",
+   "source_finding": "F17",
+   "verifier_notes": "Confirmed. The verifier warns against a blind rename, because code identifiers such as refinePartition would then read differently from the doc."
+  },
+  {
+   "id": "DPR1-12",
+   "title": "The same subjects are written at full depth in several docs",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/README.md:13-68",
+    "docs/services/PROSPECTOR.md:30-66",
+    "services/prospector/README.md:89-110",
+    "docs/services/PROSPECTOR.md:1806-1820",
+    "services/prospector/README.md:120-127",
+    "docs/services/PROSPECTOR.md:1646-1664",
+    "docs/services/PROSPECTOR.md:180-198",
+    "docs/services/PROSPECTOR.md:362-393",
+    "docs/services/PROSPECTOR.md:204-257",
+    "services/prospector/src/database/migrations/seeds/README.md:156-174",
+    "docs/venues/BITGET-SEED.md:10-22"
+   ],
+   "problem": "README 'Why it exists' and PROSPECTOR.md 'Why it is a service of its own' are near-identical. The env table appears twice with different wording. README 'What it does not do' repeats PROSPECTOR.md. Research vs permanent seeds is written in full three times (PROSPECTOR.md, seeds README, BITGET-SEED.md). Within PROSPECTOR.md, the state flow (180-198 and 362-393), withdrawal, and 'nothing discovers by probing' (213-216, 353-360, 406-410, 515-516) each appear several times. One copy has already drifted: 183-184 and 375-378 say a venue never goes back to walking, while the walk schedule re-walks listable venues. BITGET-SEED.md, a venue doc, explains prospector internals (seed.ts, walkSeries).",
+   "evidence": "Side by side: README:15-25 vs PROSPECTOR.md:44-62; seeds/README.md:172-174 vs PROSPECTOR.md:242-247 (the same 'A separate script could do the same crawl' sentence).",
+   "fix": "(1) Make services/prospector/README.md a one-screen operator page: 2-3 lines on what it is; env vars (PROSPECTOR_VENUES, PROSPECTOR_CONCURRENCY, CATALOG_TOKEN, LOG_LEVEL); the /data/catalog mount; ports (8080 private API, 3000 health); the walk-schedule file with a correct example; 'adding a venue'; a link to PROSPECTOR.md. Delete 'Why it exists', 'What it does', 'Venues' and 'What it does not do'. Keep one env table, here, and link to it from PROSPECTOR.md's Configuration section. (2) Make seeds/README.md the one home for the seed format and research vs permanent seeds, and cut PROSPECTOR.md 233-251 to a two-line pointer. (3) Reduce BITGET-SEED.md to bitget facts and link the seeds README; drop walkSeries and other service internals. (4) In PROSPECTOR.md, merge 180-198 and 362-393 into one state-flow section, correct 'never goes back to walking' to agree with the walk schedule, and give withdrawal and 'nothing discovers by probing' one home each, with pointers from elsewhere.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F20",
+   "verifier_notes": "Confirmed. Large but bounded and docs-only. The user explicitly asked for a fresh start, so this is IMPLEMENT, not DEFER."
+  },
+  {
+   "id": "DPR1-13",
+   "title": "History and change narration throughout breaks 'Only what is true today'",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:87-93",
+    "docs/services/PROSPECTOR.md:384-388",
+    "docs/services/PROSPECTOR.md:567",
+    "docs/services/PROSPECTOR.md:639-645",
+    "docs/services/PROSPECTOR.md:653-656",
+    "docs/services/PROSPECTOR.md:859-861",
+    "docs/services/PROSPECTOR.md:1097-1106",
+    "docs/services/PROSPECTOR.md:1145-1154",
+    "docs/services/PROSPECTOR.md:1316-1328",
+    "docs/services/PROSPECTOR.md:1379-1391",
+    "docs/services/PROSPECTOR.md:1428-1434",
+    "docs/services/PROSPECTOR.md:1459-1465",
+    "services/prospector/src/database/migrations/seeds/README.md:113-118"
+   ],
+   "problem": "Many passages describe earlier designs or incidents ('was surveyed through the indexes until...', 'it once filed', 'Descent used to stop at... FANOUT', 'Before this there were seven places writing to wip', 'Ordering by date was the obvious thing and it was wrong', seeds README 'The table is unchanged; only the language here is'). CLAUDE.md bans history. Several of these narrated 'old' states are what the doc still asserts elsewhere (DPR1-01, -03, -17, -16, -18).",
+   "evidence": "CLAUDE.md: 'Tech docs describe the current state. No history (\"was X, now Y\")'. The verifier read every cited passage.",
+   "fix": "For each passage, keep the current rule and a present-tense reason and delete the narrative. Examples: 1459-1465 becomes 'The sweep reads `wip` in `seq` order, not by date: generation parks keys while the sweep reads, and `seq` (AUTOINCREMENT) only grows, so a key parked mid-sweep lands ahead of the cursor and is asked in the same pass.' 639-645: one sentence, descent splits on size, not on child count or shape. 87-93: 'Bybit's main archive is a listable S3 bucket (s3.ts); its order books are on quote-saver.bycsi.com, which answers no listing API (html.ts).' Seeds README 113-118: keep 'The file says `floor`; seed.ts writes `tip = floor - 1` in the series' grain' and drop the rest. Measurements that justify a rule may stay, stated as facts. Sweep the whole of PROSPECTOR.md, beyond line 1500, for 'was / once / used to / before this / now'. Check each passage against the code as you go.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F18",
+   "verifier_notes": "Confirmed. Effort is large. The reviewer suggests a matching sweep of code docblocks (see DPR1-20)."
+  },
+  {
+   "id": "DPR1-14",
+   "title": "Provider docs are framed around their consumers and the motivating problem",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:3-28",
+    "docs/services/PROSPECTOR.md:42-66",
+    "docs/services/PROSPECTOR.md:416-420",
+    "docs/services/PROSPECTOR.md:979-981",
+    "services/prospector/README.md:13-25",
+    "services/prospector/README.md:42-44"
+   ],
+   "problem": "'The goal' explains the catalog through what downstream consumers get ('nothing else in the monorepo ever learns', 'the consumer never learns'). 'Why it is a service of its own' and README 'Why it exists' explain prospector through downloaders and hosts. The probing-loss table uses downloader behaviour. 979-981 justifies migrations by 'collection bookkeeping'. README:42-44 names collection. All of these break the CLAUDE.md dependency-direction and own-subject rules.",
+   "evidence": "CLAUDE.md 'Docs depend in the direction the code does'. Prospector depends on no downloader. docs/modules/ARCHIVES.md:25-40 already covers the decoupling across hosts.",
+   "fix": "Replace 'The goal' with a short 'What it is' on prospector's own terms. Keep the venue-heterogeneity paragraph (5-12), since normalising it is prospector's job. Drop the 'downstream/consumer never learns' framing. Delete 'Why it is a service of its own' (42-66) after checking ARCHIVES.md covers the decoupling. Add the 'whole picture arrives in hours' point there if wanted. Keep the 'an archive is stable' paragraph. 416-420: state losses in catalog terms (a changed file is corrected at the next walk; a deleted file is not marked absent until a walk covers it) and drop the 'we fetch... tell the catalog' row. 979-981: end with 'which is why they ship as migrations: a walk of that month re-lists the 85 unless something refuses them'. README:42-44: drop 'including the ones collection does not read'. README:56-59 can stay, framed as an offering ('accepts download reports').",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F19",
+   "verifier_notes": "Confirmed. The verifier says the heterogeneity paragraph is legitimately prospector's subject and should be kept."
+  },
+  {
+   "id": "DPR1-15",
+   "title": "The adapter hook table lists a non-existent `tagOf` and omits name, host, scanner, base and notFoundCodes",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:126-147",
+    "docs/venues/BYBIT.md:262",
+    "docs/venues/BINANCE.md:34"
+   ],
+   "problem": "The table of adapter members has a `tagOf(path)` row, but no such member exists anywhere in src or the tests. It leaves out `notFoundCodes`, which is what refusesUs and ruleOnFailure are defined against, and `name`, `host`, `scanner` and `base`. BYBIT.md:262 and BINANCE.md:34 also cite tagOf, and those venue docs name prospector, which CLAUDE.md forbids.",
+   "evidence": "A whole-word grep for tagOf over src and tests finds nothing. types.ts members: name 433, host 449, scanner 452, base 505, notFoundCodes 587.",
+   "fix": "Delete the tagOf row. Add rows for name/host (the pair identifies a server; host is empty for a single-server venue; it must match a venue row), scanner, base and notFoundCodes (default [404]; for venues where the status alone settles absence, otherwise use refusesUs/ruleOnFailure), summarised from the types.ts docblocks. Make this table the one summary and leave the detail in the docblocks. Flag BYBIT.md:262 and BINANCE.md:34 to the venue-docs unit: remove tagOf and any service names.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F7",
+   "verifier_notes": "Confirmed. The verifier added `base` and found that the stale hook has spread to two venue docs."
+  },
+  {
+   "id": "DPR1-16",
+   "title": "Run kinds and `establishedAt` are described wrongly: no `probe` run rows exist, and establishedAt is not walk-only",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:999-1001",
+    "services/prospector/src/database/schema.ts:224-225",
+    "services/prospector/src/survey.ts:110",
+    "services/prospector/src/types.ts:1328"
+   ],
+   "problem": "The doc says `kind` is walk, update or probe ('a settling sweep') and that 'establishedAt asks only about walks'. No code opens a 'probe' run; probing has no run rows, and its work list is `wip`. establishedAt takes MAX(started) over completed runs at the prefix or an ancestor with no kind filter. Kind is used only in the open-descendant guard. For okx and bitget, `established` therefore comes entirely from update rows. The survey.ts:110 docblock and the schema.ts comment repeat the stale claim.",
+   "evidence": "survey.ts:112 `const kind: RunKind = occasion === 'partial' ? 'update' : 'walk'`; kindOf sync.ts:483-484; catalog/queries.ts:1441-1475 (no kind filter except `o.kind = r.kind` in NOT EXISTS). The only 'probe' literals are the RunKind declaration, an event cause, and tests/catalog.test.ts:746-749.",
+   "fix": "PROSPECTOR.md:999-1001: `kind` is `walk` for a listing pass and `update` for a generated one. Probing keeps no run rows: `wip` is its work list. establishedAt returns the latest `started` of any completed run (job or scope, either kind) at the prefix or an ancestor; an ancestor does not count while an open non-empty-scope run of the same kind lies below it. The kinds keep separate rows because open/resume lookups (openJob, openPartitions) are per kind. Fix the survey.ts:110 docblock and remove 'probe: a settling sweep' from the schema.ts:224-225 comment.",
+   "tests": "If RunKind is narrowed, update tests/catalog.test.ts:746-749 to use 'update'.",
+   "owner_question": "Should 'probe' be removed from RunKind (types.ts:1328), with tests/catalog.test.ts:746-749 updated? That is a small code change; tsc would flag any remaining use.",
+   "source_finding": "F8",
+   "verifier_notes": "Confirmed."
+  },
+  {
+   "id": "DPR1-17",
+   "title": "PROSPECTOR.md and the README describe the walk cadence wrongly: 'a weekday', `walkOn(day)`, 72 hours, 'where its adapter says so'",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:451-455",
+    "services/prospector/README.md:61-62",
+    "docs/services/PROSPECTOR.md:543-546"
+   ],
+   "problem": "PROSPECTOR.md:451-455 says walks happen on a weekday via `walkOn(day)` and are guarded by 72 hours, and that a missed day waits for the next one. There is no walkOn. The schedule uses days of the month 1-30, the guard is 24h, and a missed day is made up at the next update. This contradicts the doc's own section at 1236-1253. README:61-62 says re-walking happens 'where its adapter says so', but the deployment's walk schedule decides, as README:112-118 itself says. 543-546 goes away with DPR1-01.",
+   "evidence": "No walkOn in src. schedule.ts:113 LAST_DAY = 30, :116 APART_SECONDS = 24*3600, :99-107 walkIsDue/lastDueDay. sync.ts:469 uses walkDaysOf(adapter.name).",
+   "fix": "Delete PROSPECTOR.md:451-455 and keep '#### When an update is a walk' (1221-1253) as the only description; 448-449 already point there. README:61-62: 'by update, or by a walk on the days this deployment's walk schedule sets (see [When a venue is walked again](#when-a-venue-is-walked-again))'. 543-546 is removed by DPR1-01.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F3",
+   "verifier_notes": "Confirmed. The F22 verifier flagged the same walkOn passage independently."
+  },
+  {
+   "id": "DPR1-18",
+   "title": "PROSPECTOR.md refers to `month.state`, but there is no month table or state column",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:423-425"
+   ],
+   "problem": "The doc says '`month.state` reads `closed` when nothing is pending'. No schema has a month table or a state column. The month-level unit is `partition`, with pending/pending_bytes. 'Settled' is computed by the catalog service. The paragraph's point is correct; the field is invented.",
+   "evidence": "schema.ts:331-353 partition columns. A repo-wide grep for 'month.state' finds only this line. services/catalog/src/partitions.ts computes settled.",
+   "fix": "Rewrite as: 'A late file is a new file below the tip, so no generated range asks for it and only a walk finds it. A partition whose `pending` is zero has downloaded every file the catalog knows of. That is a statement about known files, not a guarantee the month is whole.' For settled, point to VOCABULARY.md, without re-explaining the catalog service's rule.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F9",
+   "verifier_notes": "Verifier lowered severity from medium to low: a query fails at once rather than returning a wrong answer."
+  },
+  {
+   "id": "DPR1-19",
+   "title": "Absence handling is misstated: 'a 404 takes the key off the list', 'asks twice about every key', and 'a venue whose adapter says probes'",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:1482-1485",
+    "docs/services/PROSPECTOR.md:462-467",
+    "docs/services/PROSPECTOR.md:1416"
+   ],
+   "problem": "Line 1482: a row leaves wip only after CONFIRMATIONS (2 for a generated key, 30 for a listed one) or when the adapter rules 'drop'. Until then it stays with tries incremented. Line 462 'asks twice': okx (404) and bitget (S3 403) rule 'drop' at once, so they ask once. Line 1416 suggests probing depends on the adapter's `probes` flag, while every update probes.",
+   "evidence": "probe.ts:623 CONFIRMATIONS; probe.ts:236-243 judge(); okx.ts:37-41 and bitget.ts:51-52 ruleOnFailure; survey.ts:67-68 `probing = adapter.probes === true || doing === 'partial'`.",
+   "fix": "1482: 'A 404 counts towards the row's confirmations (CONFIRMATIONS: 2 for a generated key, 30 for a listed one). The row leaves wip once they are reached, or at once where the adapter's ruleOnFailure answers drop. Until then it stays in wip and the next pass asks again. Nothing is recorded as absent.' 462: add 'except where the adapter's ruleOnFailure answers drop on the first absence answer', naming the mechanism rather than listing venues. 1416: 'a pass that probes (every update, and a walk on a venue whose adapter says probes)'.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F11",
+   "verifier_notes": "Confirmed. The 1416 part is the weakest, since 1428 already states the rule."
+  },
+  {
+   "id": "DPR1-20",
+   "title": "Code docblocks contradict the shipped venue rows, the migration rules and the run kinds",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/src/api/collector.ts:11-14",
+    "services/prospector/src/collector.ts:22-26",
+    "services/prospector/src/database/migrations/seeds/seed.ts:13-17",
+    "services/prospector/src/database/schema.ts:224-225"
+   ],
+   "problem": "The api/collector.ts and collector.ts docblocks say the `venue` table is written by a survey and is empty on a fresh database. The rows ship in migration 001-core, and venueIdOf never inserts. The seed.ts docblock is covered by DPR1-07 and the schema.ts comment by DPR1-16. Under CLAUDE.md these docblocks are docs.",
+   "evidence": "001-core.ts:36-57 inserts all eight venue rows (when seedData is set). catalog/queries.ts:1078-1087 venueIdOf throws 'venues come from a migration'.",
+   "fix": "api/collector.ts:11-14 and collector.ts:22-26: named venues are checked against the adapter registry, which defines what a venue is. The `venue` rows come from the core migration and are absent in fixtures built without seed data. Drop 'written by a survey' and 'on a fresh database it is empty'. Apply the seed.ts fix from DPR1-07 and the schema.ts fix from DPR1-16 in the same pass.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F23",
+   "verifier_notes": "Confirmed. The original evidence's line range was the migration's run function, not the VENUES constant; the substance is unaffected."
+  },
+  {
+   "id": "DPR1-21",
+   "title": "Small README and PROSPECTOR.md inaccuracies: 'the venues migration', 'saying which line', 'publishes no host port'",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/README.md:82-83",
+    "services/prospector/README.md:118",
+    "docs/services/PROSPECTOR.md:1249-1252",
+    "services/prospector/README.md:106-107"
+   ],
+   "problem": "(1) No migration is called 'venues': the rows are VENUES in 001-core.ts. (2) loadSchedule's unknown-venue and unlistable-venue errors name the venue, not a line; only parse() errors carry a line. (3) 'The API is private: it publishes no host port' is literally true of 8080, but compose.yml publishes health on :3000.",
+   "evidence": "schedule.ts:55-59 vs :154-155; compose.yml `ports: - :3000` and its own comment 'Only health is published'.",
+   "fix": "README:82-83: 'a row in VENUES in src/database/migrations/001-core.ts'. README:118 and PROSPECTOR.md:1249-1252: the service stops saying what is wrong, naming the line for a malformed line or a bad day, and the venue for one that does not exist or cannot be listed. README:106-107: 'The collector and reports APIs on 8080 publish no host port; only health on 3000 is published.'",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F24",
+   "verifier_notes": "Confirmed. Part (3) is weak, a clarification only. Part (1) overlaps DPR1-06."
+  },
+  {
+   "id": "DPR1-22",
+   "title": "Venue publication-delay measurements sit in the service doc and contradict BINANCE.md",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:469-491",
+    "docs/venues/BINANCE.md:11-26",
+    "docs/venues/BITGET.md:642-644"
+   ],
+   "problem": "The per-venue table of publication delay (p50/p99 from Last-Modified) gives venue facts, which belong in docs/venues/**. BITGET.md already holds bitget's figures, so that fact has two homes. BINANCE.md says the cadence is 'Neither is verified here', while PROSPECTOR.md has a measured 32.0h/33.6h.",
+   "evidence": "PROSPECTOR.md:478-484 vs BINANCE.md:26 and BITGET.md:642-644.",
+   "fix": "Move each venue's measured delay (files, p50, p99, measurement window) into its venue doc's publication section, with no service names. In BINANCE.md, replace 'Neither is verified here' with what was measured (the daily delay) and what was not (the first-Monday monthly claim). Remove the duplicate bitget figures. In PROSPECTOR.md keep only the mechanism: probingLag is set from a venue's measured p99 publication delay with a day of margin, the (p99 - H)/24 reasoning, and a pointer to the venue docs. Keep the 'How each venue updates' request-count table (427-441) in PROSPECTOR.md, because it measures the service's own cost and moving it would make venue docs name a service.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F25",
+   "verifier_notes": "Confirmed. The verifier corrected the original fix: keep the request-count table, and the lag rule is (p99-H)/24 plus a day, not ceil(p99/24)."
+  },
+  {
+   "id": "DPR1-23",
+   "title": "Plans and conditional futures inside a tech doc",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:358-360",
+    "docs/services/PROSPECTOR.md:963-964",
+    "docs/services/PROSPECTOR.md:1197-1198",
+    "docs/services/PROSPECTOR.md:264-266"
+   ],
+   "problem": "'an occasional full walk, or a cheap delimiter-map of the tree' describes a mode that does not exist. 'If a history of passes is ever wanted...' is a conditional plan. 'Detecting it is an open question rather than a gap' is an open question. 963-964 ('If either is ever wanted it is a venue row of its own') is a design rule with a real current-fact reason.",
+   "evidence": "passFor offers only walk or update. Delimiter listings are used only inside a walk's partitioning (s3.ts:167-174, descend.ts).",
+   "fix": "358-360: 'Neither covers a new dataset or a new pattern: on a listable venue only a walk finds one (see When an update is a walk); on okx and bitget one arrives only through the venue's seed migration.' Delete 1197-1198 and the 'open question' sentence at 264-265 (that paragraph is rewritten by DPR1-03). 963-964: reword as current fact: 'separate Gate entities with their own order books, so their BTC_USDT is not gate.com's; they are refused rather than merged under this venue's symbols.'",
+   "tests": "None.",
+   "owner_question": "Are the delimiter-map pass or a history of passes live intentions? If so, add a line under 'Prospector' in docs/planning/CATALOG.md; otherwise drop them.",
+   "source_finding": "F26",
+   "verifier_notes": "Confirmed. The verifier corrected the 358-360 replacement for unlisted venues."
+  },
+  {
+   "id": "DPR1-24",
+   "title": "The seeds README 'Quoting' section and the seed.ts docblock are out of date",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/prospector/src/database/migrations/seeds/README.md:178-181",
+    "services/prospector/src/database/migrations/seeds/seed.ts:275-277"
+   ],
+   "problem": "The README says the only quoted fields are okx's \"incremental,400\" and \"incremental,5000\". bitget quotes \"snapshot,500\" (6 rows) and gate quotes \"incremental,full\" (3 rows). The seed.ts fields() docblock names only incremental,400.",
+   "evidence": "A grep over seeds/*/*.csv: 8 incremental,400; 8 incremental,5000; 3 incremental,full; 6 snapshot,500.",
+   "fix": "'A field is quoted only where it contains a comma or a quote, as multi-part variants such as \"incremental,400\" do.' Make the same edit in the seed.ts fields() docblock.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F14",
+   "verifier_notes": "Confirmed."
+  },
+  {
+   "id": "DPR1-25",
+   "title": "PROSPECTOR.md justifies gate's `probingLag` of 1 by walks that do not run on most updates",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:482",
+    "docs/services/PROSPECTOR.md:486-488",
+    "services/prospector/src/adapters/gate.ts"
+   ],
+   "problem": "The lag table justifies gate's 1 with 'its walks re-read the index'. Under the walk schedule, an unscheduled gate walks once a month (day 5), so most gate updates are probing passes. By the doc's own rule (p99 28.0h), gate needs 2 or more. gate.ts declares no probingLag and gets the default 1. The cost is wasted 404s; nothing is lost.",
+   "evidence": "gate.ts has no probingLag; types.ts:739-741 default 1; schedule.ts:64 default day ((id-1)%30)+1, gate id 5; sync.ts:469.",
+   "fix": "In the lag table (482), replace '1 \u2014 its walks re-read the index' with '1 (the default)', with no justification. Record the value question in docs/planning/ or BUGS.md, not in this doc.",
+   "tests": "If the owner raises the lag, no new test is needed.",
+   "owner_question": "Should gate declare `probingLag: 3` (or 2), like the other adapters, given its measured p99 of 28.0h and that most of its updates probe? If yes, add it to src/adapters/gate.ts with the standard docblock and update the table cell.",
+   "source_finding": "F16",
+   "verifier_notes": "Verifier lowered severity from medium to low: a stale rationale for a tuning value, with no correctness impact."
+  },
+  {
+   "id": "DPR1-26",
+   "title": "PROSPECTOR.md gives the probe order as `wip.id`; the column is `seq`",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docs/services/PROSPECTOR.md:1455"
+   ],
+   "problem": "'In the order the rows were parked, which is `wip.id`'. The column is `seq`, and line 1174 of the same doc says `(venue_id, seq)`.",
+   "evidence": "schema.ts:123 `seq INTEGER PRIMARY KEY AUTOINCREMENT`; wip.ts:151 `ORDER BY seq`.",
+   "fix": "Replace `wip.id` with `wip.seq` at 1455, and 'An id only ever grows' with 'A seq only ever grows'. Leave 1467. If DPR1-13 rewrites 1459-1465 first, fold this into that edit.",
+   "tests": "None.",
+   "owner_question": "",
+   "source_finding": "F10",
+   "verifier_notes": "Confirmed."
+  }
+ ],
+ "rejected": []
+}

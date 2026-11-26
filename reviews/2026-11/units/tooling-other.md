@@ -1,0 +1,494 @@
+# Review: tooling-other (dev/tooling non-cold, ./tools, ./tb)
+
+## Overall assessment
+
+dev/tooling (the `./tools` CLI: monitor, rabbit, remote sync-env) is small, but two of its tools harm the pipeline they inspect. `tools rabbit <queue>` deletes the messages it 'fetches' (basic.get with noAck:true), and `--watch` joins the production queue as a competing consumer that requeue-loops the head message. The README describes both as read-only, and the tests pin the destructive behaviour. That is the main risk this unit poses to the repo's 'faithful archive' promise, because realtime data that is lost cannot be fetched again. RabbitMQ discovery picks an arbitrary published port and guesses the management port, so it breaks with the repo's own compose file (ephemeral ports). The monitor shows unhealthy containers as healthy. `remote sync-env` builds unquoted shell strings, accepts the remote filesystem root as a destination, overwrites remote secrets without asking, and reports success after failures. The shared env loader (also used by tools/cold) keeps quotes in values, applies a precedence that contradicts the README, and silently ignores missing -e/-m files. dev/tooling/README.md is wrong in many places and contains a plan list, and the root README mislabels docs/tooling as `tb`. Restructuring recommendations: (1) the rabbit tools must observe, not consume: peek with noAck:false plus a requeue, and watch through an exclusive tap queue bound to the same exchanges. (2) Keep the hand-written env parser, made compose-compatible (quotes, export), with the -e file applied last and env.ts given an injectable root dir for tests. (3) Every shell-out (find, ssh, scp) should use execFileSync with argument arrays. (4) Compute the repo root one way: drop WORKSPACE_ROOT from ./tools, which nothing reads. (5) Rewrite the README from scratch after the behaviour fixes land, listing only current behaviour and pointing to docs/tooling/COLD.md for cold. Tests: 58/58 non-cold tests pass today (`npx vitest run --exclude 'tests/tools/cold/**'` in dev/tooling). They cover none of the discovery, health or CLI-entry logic.
+
+## Summary
+
+| ID | Severity | Category | Decision | Title |
+|---|---|---|---|---|
+| TOT-01 | critical | correctness | IMPLEMENT | `tools rabbit <queue>` permanently consumes (deletes) the messages it 'fetches' |
+| TOT-02 | high | correctness | IMPLEMENT | `rabbit --watch` competes with real consumers and requeue-loops the head message instead of tapping the queue |
+| TOT-03 | high | correctness | IMPLEMENT | RabbitMQ discovery picks an arbitrary port and guesses the management port; QUEUE_USER/PASS ignored in default URL; RABBITMQ_MGMT_URL documented but unread |
+| TOT-04 | high | correctness | IMPLEMENT | Monitor shows unhealthy containers as '✓ healthy' |
+| TOT-05 | medium | docs | IMPLEMENT | dev/tooling/README.md describes behaviour the code does not have, omits `cold`, and contains a plan list |
+| TOT-06 | medium | correctness | IMPLEMENT | Env parser keeps quotes, mis-handles `export` and '#' inside quoted values (diverges from docker compose) |
+| TOT-07 | medium | correctness | IMPLEMENT | `-e` file cannot override dev/tooling/.env; missing `-e`/`-m` files silently ignored; `-m` expects a layout the repo does not have |
+| TOT-08 | medium | security | IMPLEMENT | sync-env builds ssh/scp/find commands as unquoted shell strings (injection, option injection, breaks on spaces) |
+| TOT-09 | medium | security | IMPLEMENT | sync-env: empty or '/' path targets the remote root; overwrites every remote .env without confirmation; files land world-readable; walks .deprecated/dx/dot-dirs |
+| TOT-10 | medium | robustness | IMPLEMENT | Monitor interval: `-i 0.5`/`-i 0`/`-i x` polls Docker every ~1 ms; ticks overlap |
+| TOT-11 | medium | testing | IMPLEMENT | Tests lock in the destructive rabbit behaviour, miss discovery/health/CLI/sync-env failure paths, and read real repo .env files |
+| TOT-12 | low | robustness | IMPLEMENT | sync-env reports 'N file(s) synced' and exits 0 after failures; find exit 1 aborts the sync |
+| TOT-13 | low | security | IMPLEMENT | RabbitMQ password printed to the terminal; credentials not URL-encoded |
+| TOT-14 | low | robustness | IMPLEMENT | Ctrl+C in `rabbit --watch` crashes with an unhandled IllegalOperationError (SIGINT delivered twice) |
+| TOT-15 | low | robustness | IMPLEMENT | Top-level CLI: --help/--version/unknown commands open the interactive menu; non-TTY fails cryptically; menu 'Cold' exits 1; `--env=` form dropped |
+| TOT-16 | low | correctness | IMPLEMENT | `-v/--verbose` does nothing; debug logger helpers unused |
+| TOT-17 | low | docs | IMPLEMENT | Root README calls docs/tooling 'the `tb` command-line tools'; `./tb` carries the dx template banner |
+| TOT-18 | low | robustness | IMPLEMENT | `./tools` wrapper: missing dist gives a raw MODULE_NOT_FOUND; signal deaths map to exit 1; unused WORKSPACE_ROOT |
+| TOT-19 | low | correctness | IMPLEMENT | `${VAR}` expansion: comment says unresolved refs kept (code empties them), chained refs stay literal, process.env values rewritten |
+| TOT-20 | low | code-quality | IMPLEMENT | Errors and warnings go to stdout; misleading 'Connection failed' label; error printed twice; unused prompt helpers |
+| TOT-21 | low | security | DEFER | Untrusted raw message bodies and queue/container names written unescaped to the terminal |
+
+## TOT-01: `tools rabbit <queue>` permanently consumes (deletes) the messages it 'fetches'
+
+- **Severity:** critical
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/tools/rabbitmq/index.ts:102-131`
+  - `dev/tooling/src/index.ts:45`
+  - `dev/tooling/README.md:50`
+  - `dev/tooling/README.md:58-63`
+  - `dev/tooling/tests/tools/rabbitmq.test.ts:58-61`
+
+**Problem.** Fetch mode, the default when a queue is named, loops `channel.get(queue, { noAck: true })` up to --messages times (default 10). With no-ack, the broker removes each message as soon as it is delivered. A diagnostic 'look at the queue' command therefore deletes up to N messages, which are the OLDEST ones at the head of the queue, not the 'recent' ones the README promises. These are the durable queues that pipe declares (services/pipe/src/bindings.ts:65-67), and realtime data cannot be fetched again (docs/DATA_PIPELINE.md). Separately, basic.get does not work on stream queues, yet src/index.ts:45 advertises 'queues and streams'. The repo declares no stream queues, so that part is cosmetic.
+
+**Evidence.** rabbitmq/index.ts:109-110 `const msg = await channel.get(queueArg, { noAck: true }); if (! msg) break;`. The test asserts it (rabbitmq.test.ts:60 `toHaveBeenCalledWith('my-queue', { noAck: true })`). README:58 '# Fetch 10 recent messages from queue'. Both verifiers confirmed this as critical.
+
+**Fix.** Call `channel.get(queue, { noAck: false })` N times and keep the message objects. Print them, then call `channel.nackAll(true)` before closing. Do the requeue in a `finally` block so an error while printing cannot skip it. On a classic queue the messages return to their positions with redelivered=true, so state that in the help text and the README. The alternative is the management API, `POST /api/queues/{vhost}/{name}/get` with `ackmode:'ack_requeue_true'`. If draining should stay possible, put it behind an explicit `--consume` flag with a TTY confirm. Change the src/index.ts:45 description to 'queues', or detect stream queues through the management API (`GET /api/queues/{vhost}/{name}`, `.type`) and refuse them with a clear message. README:50/58 should say: oldest messages at the head, requeued, marked redelivered.
+
+**Tests to add.** rabbitmq.test.ts: assert `{ noAck: false }`. Add `nackAll` to the mock and assert it is called with `true` after the gets and before close. Assert nackAll is still called when printing or parsing throws. If --consume is added, assert it is the only path that uses noAck:true.
+
+**Verifier notes.** Both verifiers confirmed it as critical. The blast radius is N messages per run. The stream sub-claim holds (RabbitMQ 3.12) but is cosmetic.
+
+## TOT-02: `rabbit --watch` competes with real consumers and requeue-loops the head message instead of tapping the queue
+
+- **Severity:** high
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/tools/rabbitmq/index.ts:72-92`
+  - `dev/tooling/src/commands/rabbit.ts:12`
+  - `dev/tooling/README.md:68`
+  - `dev/tooling/README.md:81-86`
+
+**Problem.** Watch mode consumes the production queue (prefetch 1, noAck:false) and calls `nack(msg, false, true)` on every delivery. When the watcher is the only consumer, which is the usual debugging case, the requeued head message comes straight back to it. The tool then prints the same message forever as #1, #2, ... and spins the broker. When real consumers are attached, the watcher takes a round-robin share of deliveries, and each one is delayed, redelivered with redelivered=true and possibly reordered. README:85 says 'Messages are not consumed (they remain in the queue)'. `--messages` is ignored in watch mode, so the README:68 example `--watch --messages 5` sets no limit.
+
+**Evidence.** index.ts:72-92 `await channel.prefetch(1); channel.consume(queueArg, ... channel.nack(msg, false, true) ..., { noAck: false })`. options.messages is read only in the fetch branch (index.ts:102), and commander defaults it to '10' (commands/rabbit.ts:12).
+
+**Fix.** Rewrite watch as a passive tap. (a) Read the bindings with `GET {mgmtUrl}/queues/{vhost}/{queue}/bindings` and drop the default-exchange binding (source ''). If none remain, or the bindings cannot be read, fail or warn clearly. Never fall back to consuming the real queue. (b) Call `assertQueue('', { exclusive: true, autoDelete: true })`, then `bindQueue(tap, b.source, b.routing_key, b.arguments)` for each binding, then `consume(tap, cb, { noAck: true })`. No prefetch, no nack. (c) If the management API reports type 'stream', consume the real queue with `{ noAck: false, arguments: { 'x-stream-offset': 'next' } }` plus prefetch, and ack each message. (d) Remove the '10' commander default. Apply it in the fetch branch, and in watch mode treat an explicitly given --messages as stop-after-N. (e) README:81-86 should say that watch shows new publishes to the queue's exchanges and never reads the queue itself.
+
+**Tests to add.** Watch never calls consume or nack with the production queue name. It asserts an exclusive/autoDelete queue and calls bindQueue once per non-default binding from a mocked management fetch. With only a default-exchange binding it warns and does not consume. `--watch --messages 2` disconnects after two deliveries. A stream-type queue is consumed with x-stream-offset 'next' and acked.
+
+**Verifier notes.** Both verifiers confirmed it as high. Correction: the quorum delivery-limit (RabbitMQ 4.x default of 20) does not apply. The repo runs 3.12 and declares only classic queues (packages/rabbitmq/src/queue.ts sets no x-queue-type). The requeue loop and the interference with consumers are enough for high. Fold TOT-14 (SIGINT guard) and TOT-21 (raw output sanitising) into this rewrite.
+
+## TOT-03: RabbitMQ discovery picks an arbitrary port and guesses the management port; QUEUE_USER/PASS ignored in default URL; RABBITMQ_MGMT_URL documented but unread
+
+- **Severity:** high
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/shared/connections/rabbitmq.ts:14-31`
+  - `dev/tooling/src/shared/utils/service-discovery.ts:42-45`
+  - `dev/tooling/src/tools/rabbitmq/index.ts:23-25`
+  - `services/rabbitmq/docker/compose.yml`
+  - `.env.example:36-38`
+  - `dev/tooling/README.md:97-98`
+  - `dev/tooling/README.md:225-226`
+
+**Problem.** connectRabbit calls discoverService without internalPort, so discovery takes `c.Ports?.[0]`. The rabbitmq:3.12-management image exposes 4369/5671/5672/15671/15672/15691/15692/25672, and compose publishes only 5672 and 15672, both on ephemeral host ports by default. Ports[0] can be an unpublished port, which makes discovery return null. The fallback QUEUE_URL then points at the container-internal host `queue`, which the host cannot resolve. Ports[0] can also be the management port, which yields an amqp:// URL aimed at the HTTP listener. Even when the right port is chosen, the management port guess `port === 5672 ? 15672 : port + 10000` is always wrong for ephemeral ports, so `rabbit --list` fails. The default URL hard-codes guest:guest and ignores QUEUE_USER/QUEUE_PASS. The README documents RABBITMQ_MGMT_URL, which nothing reads. tools/monitor/rabbitmq.ts:24-26 already handles this correctly by matching PrivatePort 15672.
+
+**Evidence.** rabbitmq.ts:20-23 calls `discoverService('rabbitmq', builder)` with no third argument. rabbitmq.ts:27 guesses with `+ 10000`. rabbitmq.ts:17 `getEnv('QUEUE_URL') || 'amqp://guest:guest@localhost:5672'`. .env.example:38 `QUEUE_URL=amqp://${QUEUE_USER}:${QUEUE_PASS}@queue:5672`. The second verifier's stub repro (three Ports orderings) gave null, the AMQP connection on the HTTP port, and a wrong management port.
+
+**Fix.** (1) service-discovery.ts: add `ports: Record<number, number>` (PrivatePort to PublicPort, published bindings only) to DiscoveryResult, and make internalPort select a published primary port. (2) connectRabbit: call `discoverService('rabbitmq', builder, 5672)` and set mgmtUrl from `discovered.ports[15672]`. If 15672 is not published, leave mgmt unset and have --list print a specific error. Never guess. (3) Precedence (resolved between the verifiers): keep discovery FIRST by default, because the QUEUE_URL in .env is container-internal. Let an explicit override skip discovery: a `--url` flag, or a QUEUE_URL that was already exported in process.env before loadEnv ran (capture that before merging), or a QUEUE_URL whose host is not a compose service name. Log the source used ('discovered container X' or 'QUEUE_URL'). (4) Fallback path: derive the management host from `new URL(url).hostname`, using RABBITMQ_MGMT_URL when set (implement it as documented), otherwise QUEUE_MGMT_PORT, otherwise 15672. (5) Build the default URL from encodeURIComponent(QUEUE_USER/QUEUE_PASS). (6) Update README:97-98 and :225-226 with the real variables and precedence.
+
+**Tests to add.** Mock dockerode listContainers to return a rabbitmq container with Ports [4369 (no PublicPort), 15672->32772, 5672->32771]. Assert that discoverService(..., 5672) returns 32771 and ports[15672] === 32772. Assert that connectRabbit (amqplib mocked) builds mgmtUrl http://localhost:32772/api. Assert that an override QUEUE_URL is used unchanged. Assert that the default URL contains QUEUE_USER/QUEUE_PASS. Assert that a missing 15672 binding gives a clear --list error.
+
+**Verifier notes.** Both verifiers confirmed it as high. They disagreed on precedence: verifier 2 says use QUEUE_URL whenever it is set, verifier 1 says that breaks the normal case. I checked the code. .env.example:38 sets QUEUE_URL to host `queue` (container-internal), and loadEnv merges it into process.env, so 'skip discovery when QUEUE_URL is set' would always skip and always fail from the host. I sided with verifier 1: discovery first, with an explicit override.
+
+## TOT-04: Monitor shows unhealthy containers as '✓ healthy'
+
+- **Severity:** high
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/tools/monitor/docker.ts:60-63`
+  - `dev/tooling/tests/tools/monitor.test.ts:42-52`
+
+**Problem.** Health is read with substring checks, and `includes('healthy')` runs before `includes('unhealthy')`. 'Up 2 hours (unhealthy)' contains 'healthy', so a failing container shows a green check and the unhealthy branch can never run. The tests only use '(healthy)' fixtures.
+
+**Evidence.** docker.ts:61-62. `'Up 2 hours (unhealthy)'.includes('healthy') === true`. Verifier 2 ran the branch chain and reproduced it.
+
+**Fix.** Parse the token: `const m = /\((healthy|unhealthy|health: starting)\)/.exec(c.Status)`, then map healthy to green '✓ healthy', unhealthy to red '✗ unhealthy', 'health: starting' to yellow '⟳ starting', and anything else to '—'. Optionally prefer `inspect().State.Health.Status`, which is already fetched for every listed (running) container.
+
+**Tests to add.** Add fixtures for 'Up 2 hours (unhealthy)', 'Up 5 seconds (health: starting)', 'Up 1 hour (healthy)' and 'Up 1 hour' (no healthcheck).
+
+**Verifier notes.** Both verifiers confirmed it as high.
+
+## TOT-05: dev/tooling/README.md describes behaviour the code does not have, omits `cold`, and contains a plan list
+
+- **Severity:** medium
+- **Category:** docs
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/README.md:21-23`
+  - `dev/tooling/README.md:50`
+  - `dev/tooling/README.md:58`
+  - `dev/tooling/README.md:68`
+  - `dev/tooling/README.md:85`
+  - `dev/tooling/README.md:98`
+  - `dev/tooling/README.md:152-153`
+  - `dev/tooling/README.md:203-215`
+  - `dev/tooling/README.md:226`
+  - `dev/tooling/README.md:250-290`
+  - `dev/tooling/README.md:369`
+  - `dev/tooling/README.md:382-395`
+  - `dev/tooling/package.json`
+
+**Problem.** The README breaks CLAUDE.md's 'only what is true today' rule in many places: (a) -v 'verbose' is a no-op (TOT-16); (b) 'recent messages' are in fact the oldest ones, and they are consumed (TOT-01); (c) the `--watch --messages 5` example: --messages is ignored in watch; (d) 'Messages are not consumed' (TOT-02); (e) RABBITMQ_MGMT_URL is documented but nothing reads it; (f) the READY/UNACKED colours contradict render.ts:5-10 (0 dim, >0 green, >10000 yellow, >100000 red); (g) the env precedence list is wrong: it omits the -m layer, mislabels dev/tooling/.env as 'Module .env', and puts -e in the wrong place (TOT-07); (h) the architecture tree omits commands/cold.ts, tools/cold, shared/connections, shared/utils/{colors,format,service-discovery}.ts and several tests, and lists functions that do not exist (listRemoteFiles, localMd5) plus a `.env` that is really `.env.example`; (i) the `--loader=ts-node/esm` line is wrong for this CommonJS package, and ts-node is not declared by @tradebot/tooling (it works only through hoisting); (j) 'Future Enhancements' is a plan list, and plans belong in docs/planning/; (k) `cold` is a top-level tool but has no section and no pointer to docs/tooling/COLD.md.
+
+**Evidence.** README:85 contradicts rabbitmq/index.ts:89 (nack requeue) and :109 (noAck:true). README:280 names listRemoteFiles and localMd5, which exist nowhere in src or tests. Verifier: `pnpm dev` works today only because ts-node is hoisted from the root.
+
+**Fix.** Rewrite the README from scratch against the code as it stands, after or together with TOT-01/02/03/07/16. Sections: quick start; global options with their real meaning; rabbit (state plainly what fetch and watch do to delivery; variables read: QUEUE_URL, QUEUE_USER, QUEUE_PASS, plus RABBITMQ_MGMT_URL/QUEUE_MGMT_PORT if implemented; how discovery works); monitor, with colour thresholds copied from render.ts; remote sync-env, including its confirm step and permissions after TOT-09; cold, as one paragraph and a link to docs/tooling/COLD.md and nothing deeper; env layering in env.ts order. Replace the directory tree with one line per top-level directory. Delete 'Future Enhancements' and move anything wanted into docs/planning/. Dev section: keep `pnpm dev`, drop the --loader line, and add ts-node to dev/tooling devDependencies. Remove the duplicated '---' separators. Following CLAUDE.md: no history, no future tense, and nothing framed around consumers.
+
+**Tests to add.** None (docs). Re-check every flag and env variable named in the README with grep against src after the rewrite.
+
+**Verifier notes.** The verifier confirmed every sub-claim. (g) is overstated: the 'staging' example fails only for keys that dev/tooling/.env also sets. The user explicitly asked for a documentation fresh start, so do this now.
+
+## TOT-06: Env parser keeps quotes, mis-handles `export` and '#' inside quoted values (diverges from docker compose)
+
+- **Severity:** medium
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/shared/utils/env.ts:9-35`
+
+**Problem.** parseEnvFile does not strip surrounding quotes, treats `export FOO` as the key, and strips inline comments inside quoted values. Compose reads the same files and handles all three. The values feed QUEUE_USER/QUEUE_PASS (rabbit, monitor) and, through cold/config.ts, CATALOG_TOKEN, DATA_DIR and MEGA_ROOT, so the result is a silently wrong credential or path.
+
+**Evidence.** Input `PASS="se cret"`, `P2='abc'`, `export FOO=bar`, `Q="a #b"` gives `{ PASS:'"se cret"', P2:"'abc'", 'export FOO':'bar', Q:'"a' }`. Compose gives se cret / abc / FOO=bar / 'a #b'.
+
+**Fix.** Keep the hand-written parser and extend it. Do NOT switch to node:util.parseEnv or dotenv: both turn `COLOUR=#ff0000` into '' and break the existing inline-comment test in env.test.ts. (1) Match the key with `/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=(.*)$/`. (2) Left-trim the value. If it starts with ' or ", read up to the matching closing quote. In double quotes, unescape \n, \" and \\. Do no comment stripping inside the quotes, and allow only whitespace or a `\s#` comment after the closing quote. (3) Apply `/\s+#.*$/` only to unquoted values, as today.
+
+**Tests to add.** Double-quoted with spaces; single-quoted; `export FOO=bar`; `Q="a #b"`; `Q="a" # comment`; the existing unquoted cases (COLOUR=#ff0000, URL=http://host/#anchor, trailing ` # comment`).
+
+**Verifier notes.** The verifier reproduced it. It also showed the suggested dotenv/util.parseEnv replacement is harmful here, so the refined fix keeps the hand-written parser. No .env.example quotes values today, so this bites only when a user quotes one.
+
+## TOT-07: `-e` file cannot override dev/tooling/.env; missing `-e`/`-m` files silently ignored; `-m` expects a layout the repo does not have
+
+- **Severity:** medium
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/shared/utils/env.ts:38-52`
+  - `dev/tooling/src/index.ts:58-59`
+  - `dev/tooling/README.md:22`
+  - `dev/tooling/README.md:203-215`
+  - `dev/tooling/.env.example:4`
+
+**Problem.** The merge is root < modules/<name>/.env < -e < dev/tooling/.env < process.env, so the tooling file beats the explicit -e flag, which contradicts the README and the obvious intent. parseEnvFile returns {} for a missing file, so a mistyped `-e`/`-m` silently runs with other config. Modules live at modules/<group>/<name> (modules/collect/archives, modules/store/warehouse), so `-m archives` loads nothing, and `..` is not rejected. dev/tooling/.env.example ships `QUEUE_URL=` (empty), which once copied overrides any -e QUEUE_URL.
+
+**Evidence.** env.ts:47-52 `{ ...rootEnv, ...moduleEnv, ...additionalEnv, ...toolingEnv }`. env.ts:10-12 returns {} for a missing file. `./tools -m nonexistent rabbit --help` exits 0 with no warning.
+
+**Fix.** (a) Merge as `{...rootEnv, ...moduleEnv, ...toolingEnv, ...additionalEnv}` and update the env.ts docblock. (b) If an -e path is given and does not exist, throw `--env file not found: <path>`. (c) -m: reject names containing '..'. Accept `modules/<name>` when that directory exists, otherwise require exactly one `modules/*/<name>`. Error on no match, several matches, or a missing .env. Update the help text (index.ts:59, README:22) to 'modules/<group>/<name>/.env, or just <name>'. (d) Comment out `QUEUE_URL=` in dev/tooling/.env.example. (e) The README env section lists the real layers in order (folded into TOT-05).
+
+**Tests to add.** -e beats a tooling .env key; a missing -e throws; -m resolves `archives` to modules/collect/archives; -m with `..` throws; an ambiguous or missing -m throws.
+
+**Verifier notes.** Confirmed. Moving -e last is a deliberate change to the current (code-documented) order. The verifier recommends it because an explicit flag should beat an ambient file. Caveat: for QUEUE_URL specifically, discovery overrides anyway (TOT-03), but the precedence still matters for MEGA_ROOT, CATALOG_URL and the rest.
+
+## TOT-08: sync-env builds ssh/scp/find commands as unquoted shell strings (injection, option injection, breaks on spaces)
+
+- **Severity:** medium
+- **Category:** security
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/tools/remote/sync-env.ts:12-15`
+  - `dev/tooling/src/tools/remote/sync-env.ts:63-68`
+  - `dev/tooling/src/tools/remote/types.ts:6-16`
+
+**Problem.** execSync template strings pass the user's destination, the repo paths and rootDir through the local shell, where `$()`, backticks and $VAR still expand inside double quotes. The remote shell then word-splits the mkdir argument with no quoting at all. A path with spaces creates the wrong directories, and the secret copies fail or land in the wrong tree. parseRemoteDest only checks for '@' and ':', so a userHost starting with '-' is passed to ssh as an option, and `user@[::1]:/p` is split wrongly.
+
+**Evidence.** sync-env.ts:67 `execSync(`ssh "${dest.userHost}" "mkdir -p ${remoteDir}"`)`, :68 `scp "${file}" "${dest.userHost}:${remoteFile}"`, :13 `find "${rootDir}"`. types.ts:7-9 splits at the first ':'.
+
+**Fix.** Use execFileSync with argument arrays everywhere: `execFileSync('ssh', ['--', userHost, `mkdir -p -- ${shq(remoteDir)}`])` with `shq = s => "'" + s.replace(/'/g, "'\\''") + "'"`, and `execFileSync('scp', ['-q', '--', file, `${userHost}:${remoteFile}`])`. Do not shq the scp target, because OpenSSH 9+ uses SFTP and does not shell-expand it. Replace find with `fs.readdirSync(rootDir, { recursive: true, withFileTypes: true })`, filtered on name '.env', isFile(), and no EXCLUDE segment. parseRemoteDest: reject a userHost that starts with '-' or contains whitespace, require a non-empty path (see TOT-09), and handle `[ipv6]:` by splitting after ']'.
+
+**Tests to add.** parseRemoteDest with '-oX@h:/p' (rejected), 'u@h:/a b' (accepted; assert the quoted mkdir argv) and 'u@[::1]:/p'. Assert the execFileSync argv arrays.
+
+**Verifier notes.** Confirmed as medium. The input is typed by the operator, so injection is mostly self-inflicted, but the quoting bug is real in a tool that moves secrets.
+
+## TOT-09: sync-env: empty or '/' path targets the remote root; overwrites every remote .env without confirmation; files land world-readable; walks .deprecated/dx/dot-dirs
+
+- **Severity:** medium
+- **Category:** security
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/tools/remote/types.ts:13-16`
+  - `dev/tooling/src/tools/remote/sync-env.ts:9`
+  - `dev/tooling/src/tools/remote/sync-env.ts:11-22`
+  - `dev/tooling/src/tools/remote/sync-env.ts:46-68`
+
+**Problem.** `u@h:` and `u@h:/` both parse to path '', so the files go to /.env, /services/<svc>/.env and so on. The file list is copied straight away, with no confirm, diff or backup, which replaces production values with dev ones or sends every secret to a mistyped host. EXCLUDE covers only node_modules, dist and .git, so .deprecated/, dx/ and dot-directories are walked and copied. scp runs without a mode fix, so files can land 0644 under the remote umask.
+
+**Evidence.** types.ts:15 `.replace(/\/$/, '')`. sync-env.ts:63 `${dest.path}/${relative}`. There is no confirm between the listing (53-57) and the copy loop (61-73), although prompts.ts already exports `confirm`. The verifier ran parseRemoteDest against dist and got path '' for both.
+
+**Fix.** parseRemoteDest: `path = dest.slice(colonIdx+1).replace(/\/+$/, '')`, and refuse an empty result ('refusing to sync to the filesystem root'). run(): after listing, `if (!(await confirm(`Overwrite ${files.length} .env file(s) on ${userHost} under ${path}?`, false))) { warn('Aborted.'); return; }`. Exclude '.deprecated' and dot-directories from the scan. Make the remote files private: `umask 077 && mkdir -p -- '<dir>'` in the ssh call and `chmod 600 -- '<file>'` after each copy.
+
+**Tests to add.** 'u@h:', 'u@h:/' and 'u@h://' rejected. With confirm mocked to false, no ssh/scp call is made. .deprecated/.env is not listed. The chmod/umask appear in the argv.
+
+**Verifier notes.** Confirmed as medium/low boundary. The guard rails are bounded and safe. Narrowing the file set and backups are owner design calls.
+
+**Owner question.** Should sync-env include dev/tooling/.env (cold tooling may run on the server) and dx/**? Should it back up or diff remote files before overwriting, or restrict the set to root, services/*/.env and modules/*/*/.env? Those parts are left out of the IMPLEMENT scope.
+
+## TOT-10: Monitor interval: `-i 0.5`/`-i 0`/`-i x` polls Docker every ~1 ms; ticks overlap
+
+- **Severity:** medium
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/commands/monitor.ts:13`
+  - `dev/tooling/src/tools/monitor/index.ts:8`
+  - `dev/tooling/src/tools/monitor/index.ts:58-59`
+  - `dev/tooling/src/tools/monitor/docker.ts:76-90`
+
+**Problem.** `parseInt` turns '0.5' into 0 and 'x' into NaN, and `?? 3` catches neither, so setInterval fires about every 1 ms. Each tick runs stats (about 1-2 s), logs and inspect for every container. setInterval does not wait for the async tick, so ticks overlap even at -i 1, and a late tick can paint older data over newer data. The Docker calls have no timeout.
+
+**Evidence.** Repro: `setInterval(fn, parseInt('0.5',10)*1000)` fired 174 times in 200 ms. index.ts:58-59 `await tick(); setInterval(tick, interval * 1000);`.
+
+**Fix.** `const n = Number(options.interval)`. Reject a value that is not finite or is below 1 with a clear error, or clamp fractions to at least 0.5. Replace setInterval with a self-scheduling loop: `const loop = async () => { try { await tick(); } catch (e) { warn(...) } setTimeout(loop, interval*1000); }`. Optionally wrap the per-container dockerode calls in a Promise.race timeout.
+
+**Tests to add.** `-i 0`, `-i x` and `-i 0.5` error or clamp. The loop never runs two ticks at once (fake timers with a slow tick).
+
+**Verifier notes.** Confirmed. Overstatement: at -i 1 the overlap is bounded by tick duration divided by interval, not unbounded. The 1 ms storm at 0, fractions or typos is real.
+
+## TOT-11: Tests lock in the destructive rabbit behaviour, miss discovery/health/CLI/sync-env failure paths, and read real repo .env files
+
+- **Severity:** medium
+- **Category:** testing
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/tests/tools/rabbitmq.test.ts:58-61`
+  - `dev/tooling/tests/tools/rabbitmq.test.ts:102`
+  - `dev/tooling/tests/tools/monitor.test.ts:42-52`
+  - `dev/tooling/tests/shared/utils/env.test.ts:7-11`
+  - `dev/tooling/tests/shared/utils/env.test.ts:282-300`
+  - `dev/tooling/tests/tools/remote.test.ts:120-167`
+  - `dev/tooling/src/tools/monitor/docker.ts:5-18`
+  - `dev/tooling/src/shared/utils/env.ts:6-7`
+
+**Problem.** (1) rabbitmq.test.ts asserts noAck:true and the nack-requeue watch. (2) The monitor fixtures use only '(healthy)'. cpuPercent with missing precpu_stats.system_cpu_usage returns 'NaN%', untested. (3) Nothing tests service-discovery, connectRabbit, the monitor loop or the index.ts argv/menu logic. (4) The sync-env tests only check substrings of the command strings. (5) env.test.ts calls the real loadEnv, which reads the developer's repo .env and dev/tooling/.env into process.env, so results depend on the machine and real secrets end up in the test env. The temp files have fixed names.
+
+**Evidence.** rabbitmq.test.ts:60. env.test.ts:286 `loadEnv(file)` with no root injection. env.test.ts:8 `path.join(os.tmpdir(), name)`. The verifier confirmed the NaN% result with node.
+
+**Fix.** Land each test with its fix (see TOT-01/02/03/04/09/10/12/15). Standalone pieces here: (a) cpuPercent, `if (!Number.isFinite(sysDelta) || !Number.isFinite(cpuDelta) || sysDelta <= 0 || cpuDelta < 0) return '0.00%'`, with a test; (b) env.ts, `export function loadEnv(additionalEnvPath = null, moduleName = null, dirs = { rootDir, toolingDir })`, so tests pass mkdtemp dirs; (c) env.test.ts snapshots and restores process.env in beforeEach/afterEach and uses `fs.mkdtempSync(path.join(os.tmpdir(), 'tooling-env-'))`.
+
+**Tests to add.** As listed in the fix and in the linked items.
+
+**Verifier notes.** Confirmed. Several sub-items presuppose other fixes, so add those tests with those fixes, not as a standalone bundle.
+
+## TOT-12: sync-env reports 'N file(s) synced' and exits 0 after failures; find exit 1 aborts the sync
+
+- **Severity:** low
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/tools/remote/sync-env.ts:12-15`
+  - `dev/tooling/src/tools/remote/sync-env.ts:66-76`
+  - `dev/tooling/src/commands/remote.ts`
+
+**Problem.** Per-file errors are logged, but the summary always says `Done. ${files.length} file(s) synced` and the process exits 0. Each file costs two SSH connections, which means 2N password prompts under password auth. A find exit 1, from any unreadable subdirectory, aborts the whole sync.
+
+**Evidence.** sync-env.ts:66-76: try/catch per file, followed by an unconditional success summary.
+
+**Fix.** Collect `failed: string[]`. If any failed, call `error(`Synced ${n-failed} of ${n}; failed: ...`)` and set `process.exitCode = 1`. Otherwise print the success line. The in-process directory walk from TOT-08 removes the find failure mode.
+
+**Tests to add.** A mocked scp throws for one file: assert the summary text and process.exitCode === 1, then reset it.
+
+**Verifier notes.** Confirmed. Downgraded medium to low because the red per-file error lines are visible. The main harm is the 0 exit code.
+
+**Owner question.** Should the transfer move to a single connection (tar over ssh with umask 077, or rsync -R --chmod=F600)? That transport rewrite is deferred until an owner decides how files should be transferred.
+
+## TOT-13: RabbitMQ password printed to the terminal; credentials not URL-encoded
+
+- **Severity:** low
+- **Category:** security
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/shared/connections/rabbitmq.ts:22`
+  - `dev/tooling/src/shared/connections/rabbitmq.ts:31`
+
+**Problem.** `info(`Connecting to RabbitMQ: ${url}`)` prints user:password on every run. The builder also interpolates raw credentials, so a password containing @ : / # % is mis-parsed.
+
+**Evidence.** rabbitmq.ts:22 and :31. services/pipe/src/config.ts already has a sanitizeUrl equivalent.
+
+**Fix.** Redact before logging: `const u = new URL(url); if (u.password) u.password = '***'; info(`Connecting to RabbitMQ: ${u}`)`. Use encodeURIComponent for user and pass in the builder. Do this together with TOT-03.
+
+**Tests to add.** The logged line does not contain the password. A password containing '/#@' round-trips.
+
+**Verifier notes.** Confirmed. Downgraded medium to low: this is a local tool printing credentials the operator already holds.
+
+## TOT-14: Ctrl+C in `rabbit --watch` crashes with an unhandled IllegalOperationError (SIGINT delivered twice)
+
+- **Severity:** low
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/tools/rabbitmq/index.ts:94-100`
+  - `tools:16`
+
+**Problem.** ./tools forwards SIGINT to a child that has already received it from the terminal's process group. The unguarded async listener then calls channel.close() twice. The second call throws 'Channel closing' inside a promise nobody catches, so the process prints a stack trace and exits 1.
+
+**Evidence.** Verifier reproduced it with a real amqplib 0.10.9 Channel: two SIGINTs 5 ms apart lead to IllegalOperationError via triggerUncaughtException and exit 1. Repro: reviews/2026-11/units/scratch/f15.cjs.
+
+**Fix.** `let stopping = false; const stop = async () => { if (stopping) return; stopping = true; info('Stopping watch...'); await channel.close().catch(() => {}); await connection.close().catch(() => {}); success('Disconnected'); process.exit(0); }; process.on('SIGINT', stop); process.on('SIGTERM', stop);`. Keep process.on, not once, so the second delivery hits the guard. Do NOT stop forwarding SIGINT in ./tools, because a signal sent only to the wrapper's pid must still reach the child. Do this with TOT-02.
+
+**Tests to add.** Capture the SIGINT handler with a process.on spy and stub exit. mockChannel.close resolves the first time and rejects the second. Invoke the handler twice: close is called once, exit(0) is called, and nothing rejects.
+
+**Verifier notes.** Confirmed. Downgraded medium to low: the impact is cosmetic and nothing is lost. The reviewer's optional 'stop forwarding SIGINT' suggestion was rejected.
+
+## TOT-15: Top-level CLI: --help/--version/unknown commands open the interactive menu; non-TTY fails cryptically; menu 'Cold' exits 1; `--env=` form dropped
+
+- **Severity:** low
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/index.ts:79-105`
+
+**Problem.** The menu shows whenever no argument matches a command name. `./tools --help`, `--version` and `bogus` therefore open the inquirer menu, and with no TTY they print 'Fatal error: User force closed the prompt' and exit 1. Choosing 'Cold' runs `cold` with no subcommand, which prints help and exits 1. Rebuilding the global args drops `--env=x`/`--module=x` and can push undefined. `program.parse()` is used with async actions.
+
+**Evidence.** The verifier ran each case with stdin from /dev/null. index.ts:81 `rawArgs.some(arg => commandNames.has(arg))`.
+
+**Fix.** `wantsMenu = process.stdin.isTTY && rawArgs.every(a => a.startsWith('-')) && !rawArgs.some(a => ['-h','--help','-V','--version'].includes(a))`. Otherwise let commander handle the args (`program.showHelpAfterError()`). Keep the `/^--(env|module)=/` args, and push a value only when it is defined. For 'cold', show a second select of its subcommands. Use `await program.parseAsync()`. Factor the menu decision into a pure function.
+
+**Tests to add.** Pure-function tests for the menu decision. `--help` with non-TTY stdin prints usage and exits 0. `bogus` gives commander's unknown-command error.
+
+**Verifier notes.** Confirmed as low.
+
+## TOT-16: `-v/--verbose` does nothing; debug logger helpers unused
+
+- **Severity:** low
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/index.ts:66-68`
+  - `dev/tooling/src/index.ts:97`
+  - `dev/tooling/src/shared/ui/logger.ts:8-13`
+  - `dev/tooling/src/shared/ui/logger.ts:48-53`
+  - `dev/tooling/README.md:23`
+
+**Problem.** --verbose sets process.env.DEBUG, which nothing reads. logger.debug checks LOG_LEVEL and is never called. openDebugLog and closeDebugLog are never called.
+
+**Evidence.** A grep finds only the definition and the assignment.
+
+**Fix.** Default (smallest change, matching the user's cleanup goal): remove -v/--verbose from index.ts (the option, the preAction branch, and the menu arg preservation at :97) and from the README, and delete openDebugLog/closeDebugLog/debugStream. If the owner prefers to keep it, set LOG_LEVEL=debug in preAction and add debug() calls (env layers, discovery result, redacted URL, ssh/scp argv).
+
+**Tests to add.** If kept: debug output appears only with LOG_LEVEL=debug, and -v sets it.
+
+**Verifier notes.** Confirmed. The verifier favours removal.
+
+**Owner question.** Remove -v, or wire it to LOG_LEVEL=debug? The default here is to remove it.
+
+## TOT-17: Root README calls docs/tooling 'the `tb` command-line tools'; `./tb` carries the dx template banner
+
+- **Severity:** low
+- **Category:** docs
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `README.md:40-55`
+  - `tb:1-28`
+  - `docs/tooling/COLD.md:3`
+
+**Problem.** docs/tooling documents only `tools cold` (./tools, dev/tooling). `./tb` is the dx entry point. The README table row points readers the wrong way and contradicts README.md:42, which uses tb correctly. The banner at tb:3-7 is install instructions for the dx template.
+
+**Evidence.** README.md:55 '| `docs/tooling/` | The `tb` command-line tools |'. tb:21-28 execs dx/dx.js.
+
+**Fix.** README.md:55 becomes '| `docs/tooling/` | The `./tools` developer CLI (dev/tooling) |'. Where tb is first used, add one sentence: `./tb` is the dx entry point, see dx's own README/USAGE. In tb, replace lines 3-7 with a one-line comment ('Entry point for dx: runs dx/dx.js with DX_EXECUTOR set to this script name').
+
+**Tests to add.** None.
+
+**Verifier notes.** Confirmed as low.
+
+**Owner question.** tb is copied from the dx template. Is it fine to diverge from the template banner? If not, apply only the README change.
+
+## TOT-18: `./tools` wrapper: missing dist gives a raw MODULE_NOT_FOUND; signal deaths map to exit 1; unused WORKSPACE_ROOT
+
+- **Severity:** low
+- **Category:** robustness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `tools:8-18`
+
+**Problem.** The wrapper spawns dist/index.js with no existence check. A child killed by a signal exits the wrapper with 1, not 128+signo. WORKSPACE_ROOT is set but never read, while env.ts and sync-env.ts recompute the root from __dirname.
+
+**Evidence.** tools:18 `process.exit(code ?? (signal ? 1 : 0))`. A grep finds only the setter for WORKSPACE_ROOT.
+
+**Fix.** If `!fs.existsSync(entry)`, print 'dev/tooling is not built - run: pnpm --filter @tradebot/tooling build' to stderr and exit 1. Exit with `code ?? (signal ? 128 + (os.constants.signals[signal] ?? 0) : 0)`. Drop WORKSPACE_ROOT. Optionally, warn when the newest mtime under src is newer than dist/index.js. No auto-rebuild.
+
+**Tests to add.** None required. Manual check: run ./tools with dist removed.
+
+**Verifier notes.** Confirmed as low.
+
+## TOT-19: `${VAR}` expansion: comment says unresolved refs kept (code empties them), chained refs stay literal, process.env values rewritten
+
+- **Severity:** low
+- **Category:** correctness
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/shared/utils/env.ts:54-66`
+
+**Problem.** Expansion is a single pass in insertion order, so `A=${B}`, `B=${C}` leaves A as '${C}'. Unresolved refs become '' (which matches compose), but the comment says they stay. Expansion also runs over shell-exported values, so a literal `QUEUE_PASS='ab${cd}'` becomes 'ab' and is written back to process.env and into child processes.
+
+**Evidence.** Repro: REF='/x', A='${C}', ZZ_TEST='lit${HOME}x' became 'lit/rootx'.
+
+**Fix.** Track which keys come from files and expand only file-sourced values that process.env did not override. Look references up in the full merged map. Resolve recursively with a visited set, so a cycle leaves the literal. Keep empty substitution, fix the comment, and warn once per unresolved name.
+
+**Tests to add.** A chained ref resolves; an unresolved ref gives '' plus a warning; a process.env value containing `${X}` stays untouched; a cycle does not hang.
+
+**Verifier notes.** Confirmed as low. Empty substitution is correct (compose-compatible). Only the comment is wrong there.
+
+## TOT-20: Errors and warnings go to stdout; misleading 'Connection failed' label; error printed twice; unused prompt helpers
+
+- **Severity:** low
+- **Category:** code-quality
+- **Decision:** IMPLEMENT
+- **Locations:**
+  - `dev/tooling/src/shared/ui/logger.ts:40-46`
+  - `dev/tooling/src/tools/rabbitmq/index.ts:14-16`
+  - `dev/tooling/src/tools/rabbitmq/index.ts:133-136`
+  - `dev/tooling/src/commands/rabbit.ts:16-18`
+  - `dev/tooling/src/shared/ui/prompts.ts:44-121`
+
+**Problem.** warn() and error() use console.log, so they mix with message JSON on stdout. connectRabbit runs before the try block, so real connection errors are NOT the ones labelled 'Connection failed'. Only errors after the connection is made are, such as a checkQueue 404 for a mistyped queue. commands/rabbit.ts then prints the same error again. confirmYNA, confirmYNQ, password and multiSelect have no callers.
+
+**Evidence.** logger.ts:45. rabbitmq/index.ts:134. The grep finds no callers for the four prompt helpers.
+
+**Fix.** Send warn() and error() to console.error. In rabbit/index.ts, map amqplib `code === 404` to `Queue '<name>' not found - run with --list` and drop the generic relabel. Let commands/rabbit.ts print the error once. Put the closes in a finally with .catch(() => {}). Delete the four unused prompt helpers.
+
+**Tests to add.** Update logger.test.ts to spy on console.error for warn/error. A 404 from checkQueue gives the 'not found' message, printed once.
+
+**Verifier notes.** Confirmed. Correction: knip.json has no dev/** workspace configured, so knip would not flag the unused helpers without config changes.
+
+## TOT-21: Untrusted raw message bodies and queue/container names written unescaped to the terminal
+
+- **Severity:** low
+- **Category:** security
+- **Decision:** DEFER
+- **Locations:**
+  - `dev/tooling/src/tools/rabbitmq/index.ts:83-87`
+  - `dev/tooling/src/tools/monitor/render.ts:129-130`
+
+**Problem.** Watch mode prints non-JSON payloads raw, and render.ts prints queue names raw, so ESC/OSC sequences (for example OSC 52 clipboard writes) reach the terminal. JSON output is escaped by JSON.stringify (except C1 controls), and fetch mode wraps raw content in {raw}.
+
+**Evidence.** rabbitmq/index.ts:83-87 `catch { console.log(content); }`.
+
+**Fix.** When TOT-02 rewrites the watch code, add `printable = s => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, c => '\\x' + c.charCodeAt(0).toString(16).padStart(2,'0'))` to shared/ui/logger.ts. Apply it to raw content and to the queue and container names in render.ts. Print non-UTF-8 payloads as `<binary N bytes>` plus base64.
+
+**Tests to add.** printable('a\u001b]52;c;x\u0007b') contains no 0x1b or 0x07.
+
+**Verifier notes.** Confirmed as low with implement=defer. Exploitability is low (venue payloads are JSON, and this is a developer tool on its own broker).
+
+**Owner question.** No owner decision needed. Deferred only as a standalone change: the implementer should fold it into TOT-02 when that rewrite touches the code, and otherwise leave it.
+
+## Deferred — decisions needed
+
+- **TOT-09** (partial: the core fix is IMPLEMENT): Should sync-env include dev/tooling/.env (cold tooling may run on the server) and dx/**? Should it back up or diff remote files before overwriting, or restrict the set to root, services/*/.env and modules/*/*/.env? Those parts are left out of the IMPLEMENT scope.
+- **TOT-12** (partial: the core fix is IMPLEMENT): Should the transfer move to a single connection (tar over ssh with umask 077, or rsync -R --chmod=F600)? That transport rewrite is deferred until an owner decides how files should be transferred.
+- **TOT-16** (partial: the core fix is IMPLEMENT): Remove -v, or wire it to LOG_LEVEL=debug? The default here is to remove it.
+- **TOT-17** (partial: the core fix is IMPLEMENT): tb is copied from the dx template. Is it fine to diverge from the template banner? If not, apply only the README change.
+- **TOT-21**: No owner decision needed. Deferred only as a standalone change: the implementer should fold it into TOT-02 when that rewrite touches the code, and otherwise leave it.
+
+## Rejected
+
+- **F2 sub-claim: quorum-queue delivery-limit discards messages within milliseconds**: RabbitMQ 3.12 has no default delivery-limit (the default of 20 arrived in 4.0), and the repo declares only classic queues. The rest of F2 stands as TOT-02.
+- **F15 suggestion: stop forwarding SIGINT from ./tools**: A signal sent only to the wrapper pid would then never reach the child. The guard belongs in the child (TOT-14).
+- **F10 suggestion: replace the parser with dotenv / node:util.parseEnv**: Both strip unquoted values at '#' (COLOUR=#ff0000 becomes ''), which breaks the repo's tested convention. dotenv is not a dependency. TOT-06 extends the hand-written parser instead.
+- **F3 suggestion: run discovery only when QUEUE_URL is unset**: .env always sets QUEUE_URL to the container-internal host `queue`, so this would break the normal host-side case. TOT-03 keeps discovery first and adds an explicit override.

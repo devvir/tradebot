@@ -1,0 +1,184 @@
+<title>Tradebot Review Outcome</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reading column, report style; tables scroll in their own box. */
+:root{--bg:#f6f7f9;--surface:#ffffff;--fg:#1b2230;--muted:#5d6677;--line:#dde1e8;--accent:#2f5bd3;--crit:#b4232c;--high:#b8620a;--ok:#1f7a4d;
+--sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#11151c;--surface:#181e28;--fg:#e3e7ee;--muted:#9aa3b2;--line:#2a3240;--accent:#7f9dff;--crit:#ff6b73;--high:#f0a04b;--ok:#5fcf98;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#11151c;--surface:#181e28;--fg:#e3e7ee;--muted:#9aa3b2;--line:#2a3240;--accent:#7f9dff;--crit:#ff6b73;--high:#f0a04b;--ok:#5fcf98;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 var(--sans)}
+.wrap{max-width:900px;margin:0 auto;padding-block:40px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1{font-size:30px;line-height:1.2;margin:0;text-wrap:balance;font-weight:600}
+h2{font-size:20px;margin:0 0 12px;font-weight:600;text-wrap:balance}
+h3{font-size:15px;margin:18px 0 6px;font-weight:600}
+p{margin:0 0 10px;max-width:68ch}
+.lede{color:var(--muted);font-size:16px}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.fact{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.fact b{display:block;font-size:22px;font-variant-numeric:tabular-nums;font-weight:600}
+.fact span{color:var(--muted);font-size:13px}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:500}
+tr:last-child td{border-bottom:0}
+td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sev{font-family:var(--mono);font-size:12px;font-weight:500;white-space:nowrap}
+.sev.critical{color:var(--crit)}.sev.high{color:var(--high)}.sev.medium,.sev.low{color:var(--muted)}
+.id{font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:var(--muted)}
+.dec{display:flex;flex-direction:column;gap:10px}
+.dec article{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:10px 14px}
+.dec .tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);font-weight:600}
+.dec h3{margin:2px 0 4px}
+.dec p{margin:0;color:var(--muted);font-size:14px}
+details{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 12px}
+details+details{margin-top:8px}
+summary{cursor:pointer;font-weight:500}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+ul{margin:6px 0 0;padding-left:20px}
+li{margin:0 0 8px}
+li .q{color:var(--muted);font-size:14px;display:block}
+.ok{color:var(--ok);font-weight:600}
+.note{color:var(--muted);font-size:13.5px}
+</style>
+
+<div class="wrap">
+<header>
+<p class="note">Branch <code>claude/adoring-cannon-wz6r9j</code> · baseline <code>ac10a6c</code> · 24–25 November 2026</p>
+<h1>Tradebot full review: outcome</h1>
+<p class="lede">Every package and every doc in the monorepo was reviewed in depth, each finding was checked by an independent skeptic, the confirmed ones were fixed with tests, and fresh reviewers validated the result. Your four answers settled the 69 deferred items. What is left for you is a short list of possible data issues, documented and untouched.</p>
+</header>
+<section><h2>Where things stand</h2><div class="facts">
+<div class="fact"><b>604</b><span>findings confirmed by verifiers (7 critical, 52 high)</span></div>
+<div class="fact"><b>534 + 62</b><span>implemented: the approved findings, then the deferred items your answers settled</span></div>
+<div class="fact"><b>7</b><span>possible data issues documented for you, nothing changed</span></div>
+<div class="fact"><b>268</b><span>commits, 808 files changed</span></div>
+<div class="fact"><b>4,555</b><span>tests passing; 0 failures</span></div>
+<div class="fact"><b>0</b><span>type errors in source and tests; knip clean; 0 broken doc links</span></div>
+</div>
+<p class="note" style="margin-top:12px">Final run on the pushed branch: <code>pnpm -r build</code>, <code>pnpm typecheck</code>, <code>npx knip</code> and <code>pnpm test</code> all pass. The test count is below the earlier 4,942 because the retired vault service took its 448 tests with it and the stub UI lost its BitMEX widgets; every other package gained tests.</p></section>
+<section><h2>For you to review: possible data issues</h2><p>These are recorded in <code>docs/planning/BUGS.md</code> under "Known data issues (unconfirmed, owner to review)", each with what was seen, what follows, what was not checked and how to check it. Nothing that changes catalogued, archived or stocked data was touched.</p><div class="dec">
+<article><span class="tag">Gate</span><h3>1,468 spot-shaped files under futures_usdt/trades/202107/, only 85 of them excluded</h3><p>Some of the rest may be catalogued as perpetual trades. Stocker&#x27;s wider-than-declared check still guards what it reads.</p></article>
+<article><span class="tag">Stocker</span><h3>A withdrawn file left on disk stops its partition matching the catalog</h3></article>
+<article><span class="tag">Stocker</span><h3>Rows that share a timestamp have no fixed order</h3><p>Matters for replay determinism.</p></article>
+<article><span class="tag">Stocker</span><h3>A side&#x27;s revision ignores the neighbour era&#x27;s series version</h3></article>
+<article><span class="tag">Prospector</span><h3>One URL shape can be reported under two variants, and the registry keys omit the variant</h3></article>
+<article><span class="tag">Router</span><h3>The source is acked before the broker has the copy</h3><p>At-most-once on publish faults; confirms need packages/rabbitmq.</p></article>
+<article><span class="tag">Prospector</span><h3>A preamble backfill cut short loses what it found, and its series is not walked again</h3><p>Found during validation; making backfill stoppable without fixing this would lose data, so it was left alone.</p></article>
+</div></section>
+<section><h2>How your answers settled the deferred items</h2>
+<div class="tbl"><table><thead><tr><th>Your answer</th><th>What was done</th></tr></thead><tbody>
+<tr><td>Retire the BitMEX path</td><td>The vault service moved to <code>services/.deprecated/vault</code> with its docs (it keeps its own copies of the helpers it used); <code>shared/types</code> and the BitMEX table/CSV code in shared/utils were deleted; the stub UI lost its BitMEX, testnet and digger sources, replay clock and made-up figures, and its widgets show "No data source configured". The BitMEX data on disk is untouched.</td></tr>
+<tr><td>Only on your machine</td><td>No app login. Ports bind to 127.0.0.1. Each service's compose takes a fragment chosen by <code>APP_ENV</code>: <code>dev</code> mounts the checkout at /live, the default mounts nothing and uses a slim <code>pnpm deploy</code> image. Memory limits on every service, RabbitMQ moved to a supported release, nx and the Python Dockerfiles removed, infra packs made consistent.</td></tr>
+<tr><td>Best effort, but no data thrown away on transient faults</td><td>The router cancels its consumer while paused, so messages wait in RabbitMQ; failures are retried with back-off and dead-lettered after 5 attempts; shutdown drains. Hoarder publishes into a capped durable queue, tags frames with a connection id and runs one replica.</td></tr>
+<tr><td>Do not touch data</td><td>Seven possible data issues are documented above instead of fixed.</td></tr>
+<tr><td>(decided without you)</td><td>Retry-After capped; listing redirects only to https on the same host, bodies capped at 64 MiB; stocker drains on SIGTERM; pulled archives stay on disk until you evict them; reports over 1,000 failed or mismatched keys are refused; a lost lens create is reconciled; terminal output escaped; one env parser and one retry helper in shared/utils; <code>queries.ts</code>, <code>build.ts</code> and the catalog-ui lens and survey views split (validated as pure moves).</td></tr>
+<tr><td>(skipped as not worth it now)</td><td>Unmeasured performance work, optimistic locking for lens edits, resumable large downloads, refreshing hauler's venues without a restart.</td></tr>
+</tbody></table></div></section>
+<section><h2>Most serious problems, now fixed</h2><p>Critical and high items from the code review that were implemented and then validated by a fresh reviewer.</p><div class="tbl"><table><thead><tr><th>Severity</th><th>Id</th><th>Problem</th></tr></thead><tbody>
+<tr><td><span class="sev critical">critical</span></td><td class="id">CUI-01</td><td>Proxy is an open relay: every method and path is forwarded to the catalog and prospector&#x27;s private API with the token attached</td></tr>
+<tr><td><span class="sev critical">critical</span></td><td class="id">HOA-01</td><td>Reconnect resubscribes only the first Kraken channel; the other Kraken streams stop silently after every reconnect</td></tr>
+<tr><td><span class="sev critical">critical</span></td><td class="id">INF-01</td><td>Prod Node image CMD runs dist/index.js, but every service compiles to dist/src/index.js, so every prod container crash-loops</td></tr>
+<tr><td><span class="sev critical">critical</span></td><td class="id">RTP-01</td><td>Destination `queue@exchange` is bound with its own queue name as the routing key; republished messages are unroutable and dropped, and the source is still acked</td></tr>
+<tr><td><span class="sev critical">critical</span></td><td class="id">TCL-01</td><td>A partition that changes while its tar is packed or queued is written down as stored at the new version, though the tar holds the old bytes</td></tr>
+<tr><td><span class="sev critical">critical</span></td><td class="id">TOT-01</td><td>`tools rabbit &lt;queue&gt;` permanently consumes (deletes) the messages it &#x27;fetches&#x27;</td></tr>
+<tr><td><span class="sev critical">critical</span></td><td class="id">VLT-01</td><td>Graceful shutdown loses acknowledged rows: only writers with leftover buffered lines are drained, seals in flight are not awaited, and the drain runs concurrently with server close</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">CAT-01</td><td>Contents through a lens with a hole list and date series whose files all sit in the hole</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">CUI-02</td><td>Cross-site simple POSTs become authenticated JSON writes (CSRF): any page an operator visits can start or pause every survey</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">CUI-03</td><td>Default prod image cannot start: prod.node.Dockerfile runs dist/index.js, but every service builds to dist/src/index.js</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">HAU-01</td><td>An exception escaping haul() rejects the walk while its workers and lister keep running; the page is never reported and walks overlap on the same keys</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">HAU-02</td><td>A fetch waiting for an out-of-rotation address (or in backoff) holds its global concurrency turn, so one rate-limited venue stalls every venue</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">HAU-03</td><td>No fsync of the partial or the directory before the rename and the report, so a power loss can leave a truncated file the catalog records as downloaded forever</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">HOA-02</td><td>The relay is not byte-faithful: every frame is JSON.parse&#x27;d and re-serialised before publishing, and the test cannot see it</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">HOA-03</td><td>A failed startup connect, subscribe or ack drops the channel for good: the reconnected socket subscribes nothing and the failure is debug-only</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">HOA-04</td><td>The prod container runs dist/index.js, but every service builds to dist/src/index.js, so the default compose crash-loops</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">HOA-05</td><td>No liveness detection: hung handshakes, half-open and silent sockets go unnoticed while health stays green</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">INF-02</td><td>Inline comments after empty values in .env.example files become literal values in compose: broken project name, paths, credentials, venue lists, lenses and token</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">INF-03</td><td>The shared external network name never matches what `tb` creates, and the only workaround (COMPOSE_PROJECT_NAME) merges every module into one compose project</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">INF-04</td><td>catalog-ui (an unauthenticated proxy that adds CATALOG_TOKEN), the catalog, Redis, RabbitMQ, vault and every :3000 health port are published on all host interfaces</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">PRC-01</td><td>reconcile deletes series that still have file/wip rows: FOREIGN KEY constraint failed wedges the venue&#x27;s pass</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">PRW-01</td><td>A 200 response that is not a listing is read as a complete final page, which closes the partition and withdraws every catalogued file in its range</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">PRW-02</td><td>A failed split rejects surveyVenue while its other lanes keep walking, so the retry walks the same partitions twice</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">PRW-03</td><td>Any throw outside tend() ends the venue&#x27;s sync loop silently until the process restarts</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">PRW-04</td><td>begin() race: a pause sent during a refresh or forced update is undone, and a duplicate request stays parked, later lifts a pause and resets runs</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">RTP-02</td><td>The router consumer never recovers from channel or connection loss or a broker cancel, and /health stays 200, so it silently stops routing for good</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">RTP-04</td><td>Backpressure poller: an unhandled rejection crashes the process, the passive checkQueue 404 kills the consumer channel, and one failed poll while paused wedges the gate forever</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">RTP-05</td><td>Prefetch is unbounded unless backpressure is enabled; after downtime the whole backlog is pulled into router memory (OOM crash loop)</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">RTP-06</td><td>Cached Exchange objects go stale after the second publisher recovery (hot nack loop), and bare-queue targets publish on the consumer channel</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">RTP-07</td><td>Rules sharing a source queue overwrite each other&#x27;s binding keys, and every destination of the queue receives every message</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">RTP-08</td><td>Pipe exits with code 0 on fatal errors, so `restart: on-failure` never retries it and the bindings are never declared</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">SHR-01</td><td>redactUrl/sanitizeUrl log the plaintext AMQP credential URL on parse failure; sanitizeUrl&#x27;s output is never used to connect</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">SHR-02</td><td>problemsWith checks almost no structure: stored lenses lose rules silently, mis-match, disagree between evaluators, or throw and stall lens upkeep / partition creation</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">STK-01</td><td>A single failure while deciding (corrupt archive, catalog 404/500 for one venue) aborts the whole sweep, on every sweep</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">STK-02</td><td>Prod Docker image starts dist/index.js, which the build does not emit; every node service built from it crash-loops</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">STK-03</td><td>Completing a split month that is partly moved out of the vault skips the moved-out instruments&#x27; sides and records the month complete</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">SUI-01</td><td>Browsing history: each new live tradeBin insert is treated as a gap and wipes the whole candle buffer</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TCL-02</td><td>When Mega fails fast, megaCmd waits on an unref&#x27;d timer and the process exits with code 0 mid-operation, ending --watch runs</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TCL-03</td><td>Once-stored tars moved back to &#x27;planned&#x27; are deleted with their partition map by the next plan(); audit applies this unasked, even on an empty listing</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TCL-04</td><td>The audit&#x27;s staging check flags every corrected tar as wrong, and its default fix erases that tar&#x27;s record</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TCL-05</td><td>The audit&#x27;s &#x27;remove their files again&#x27; permanently deletes archive files cold storage may not hold, while docs call it safe</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TCL-06</td><td>The Archives instrument list is cached for the life of the process: watching pushes never pack tars of new instruments, evict leaves their files</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TOT-02</td><td>`rabbit --watch` competes with real consumers and requeue-loops the head message instead of tapping the queue</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TOT-03</td><td>RabbitMQ discovery picks an arbitrary port and guesses the management port; QUEUE_USER/PASS ignored in default URL; RABBITMQ_MGMT_URL documented but unread</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">TOT-04</td><td>Monitor shows unhealthy containers as &#x27;✓ healthy&#x27;</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">VLT-02</td><td>Path traversal and no date/suffix validation: :table, :date and ?suffix= build filesystem paths unchecked (create/read *.csv.gz, unlink *.csv.gz.tmp, mkdir, directory probing outside /data/vault)</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">VLT-03</td><td>A corrupt or non-gzip file in a free-text table crashes the process (unhandled gunzip &#x27;error&#x27; event in csvRecords)</td></tr>
+<tr><td><span class="sev high">high</span></td><td class="id">VLT-04</td><td>DELETE and PUT-over-open drop the zipper writer without aborting it: queued members resurrect the deleted file without its header, or are spliced into the uploaded file</td></tr>
+</tbody></table></div>
+<h3>Found during validation and fixed</h3><ul>
+<li>Tooling cold: a corrected tar sent back for re-fetching was compared against the wrong size and downloaded forever (high).</li>
+<li>Hauler: a wait for a server out of rotation blocked the venue's whole queue; idle workers did not wake for small files (medium).</li>
+<li>Hoarder: a late channel-less refusal from OKX or Kraken dropped a valid channel (medium).</li>
+<li>Tooling cold: <code>updating-sides</code> ledger lines counted as stocked, so evict could act on a month still being written; <code>--dry-run</code> was silently ignored on push.</li>
+<li>Prospector: exclusion rows for Bybit's two servers overwrote each other.</li>
+<li>CI: timing-sensitive suites failed under parallel load; the recursive test run now goes one package at a time.</li>
+</ul></section>
+<section><h2>Documentation: the fresh start</h2>
+<p>All docs were rewritten or corrected against the current code, under the CLAUDE.md rules, then restructured:</p><ul>
+<li><code>docs/services/PROSPECTOR.md</code> is a 610-line overview with six subject articles: series, walk, passes, transport, venues and storage.</li>
+<li>Per-venue REST facts live in each venue doc, under one shared section layout; <code>docs/REST.md</code> is only the cross-venue comparison, <code>docs/planning/REST.md</code> only the collector plan. <code>docs/venues/KRAKEN.md</code> is new.</li>
+<li>The cold-storage docs are one page per tree (archives, Parquet vault, catalog, audit) plus <code>COLD.md</code> and a tooling index.</li>
+<li>Router, pipe and hoarder are documented in their READMEs; the lens rules live in <code>shared/lenses/README.md</code>; <code>docs/ARCHITECTURE.md</code> is new.</li>
+<li><code>docs/planning/archived</code> and <code>docs/services/UI.md</code> are gone; <code>docs/planning/BUGS.md</code> holds the known data issues.</li>
+</ul></section>
+<section><h2>Fixes that belong in the submodule repos</h2><p>These need changes in <code>packages/service-kit</code>, <code>packages/rabbitmq</code> or <code>dx</code>, which this work could not push to.</p><ul>
+<li><strong>packages/service-kit — RTP-08:</strong> the shutdown plugin should <code>process.exit(signal === &#x27;ERROR&#x27; ? 1 : 0)</code> so fatal errors exit</li>
+<li><strong>packages/service-kit — RTP-02 (optional):</strong> an <code>onHealthCheck</code> passthrough in SKFactory (router uses <code>service.on(&#x27;healthCheck&#x27;)</code></li>
+<li><strong>packages/rabbitmq — RTP-06:</strong> <code>declareTopology</code> should reuse existing Exchange instances on recovery instead of replacing them.</li>
+<li><strong>packages/rabbitmq — RTP-17:</strong> <code>Exchange.republish</code> should publish only the original defined properties (no persistent /</li>
+<li><strong>packages/rabbitmq — RTP-20:</strong> if the pipe &quot;Recovery&quot; integration test is wanted, re-home it in packages/rabbitmq&#x27;s suite (it was</li>
+<li><strong>packages/rabbitmq — RTP-03 (DEFER):</strong> publisher confirms needed for at-least-once routing; see router-pipe.md.</li>
+<li><strong>packages/service-kit/docs/README.md</strong> is an empty file.</li>
+<li><strong>dx — network name:</strong> dx/utils/docker.js ensureNetworkExists creates <code>${COMPOSE_PROJECT_NAME||&#x27;dx&#x27;}-network</code>, but compose files join <code>${PROJECT_NAME:-tradebot}-network</code> (only ./tb creates the right one).</li>
+<li><strong>packages/rabbitmq — RP-V1 (low):</strong> bare-queue (default-exchange) publishes fail during a publisher channel-only recovery, while named-exchange publishes recover; needs a fix in the broker&#x27;s recovery path.</li>
+<li><strong>packages/rabbitmq:</strong> during a publisher outage the router keeps its deliveries unacked; a fix needs publisher confirms in the broker library.</li></ul></section>
+<section><h2>Findings per unit</h2><div class="tbl"><table><thead><tr><th>Unit</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Implement</th><th>Defer</th></tr></thead><tbody>
+<tr><td>prospector-catalog</td><td class=n></td><td class=n>1</td><td class=n>11</td><td class=n>14</td><td class=n>21</td><td class=n>5</td></tr>
+<tr><td>prospector-walk</td><td class=n></td><td class=n>4</td><td class=n>14</td><td class=n>12</td><td class=n>27</td><td class=n>3</td></tr>
+<tr><td>stocker</td><td class=n></td><td class=n>4</td><td class=n>11</td><td class=n>16</td><td class=n>24</td><td class=n>6</td></tr>
+<tr><td>catalog</td><td class=n></td><td class=n>1</td><td class=n>9</td><td class=n>18</td><td class=n>23</td><td class=n>5</td></tr>
+<tr><td>catalog-ui</td><td class=n>1</td><td class=n>3</td><td class=n>8</td><td class=n>13</td><td class=n>20</td><td class=n>5</td></tr>
+<tr><td>hauler</td><td class=n></td><td class=n>3</td><td class=n>11</td><td class=n>10</td><td class=n>21</td><td class=n>3</td></tr>
+<tr><td>hoarder</td><td class=n>1</td><td class=n>4</td><td class=n>12</td><td class=n>9</td><td class=n>22</td><td class=n>4</td></tr>
+<tr><td>vault</td><td class=n>1</td><td class=n>3</td><td class=n>16</td><td class=n>10</td><td class=n>26</td><td class=n>4</td></tr>
+<tr><td>router-pipe</td><td class=n>1</td><td class=n>7</td><td class=n>8</td><td class=n>7</td><td class=n>19</td><td class=n>4</td></tr>
+<tr><td>shared</td><td class=n></td><td class=n>2</td><td class=n>8</td><td class=n>8</td><td class=n>16</td><td class=n>2</td></tr>
+<tr><td>stub-ui</td><td class=n></td><td class=n>1</td><td class=n>10</td><td class=n>15</td><td class=n>21</td><td class=n>5</td></tr>
+<tr><td>tooling-cold</td><td class=n>1</td><td class=n>5</td><td class=n>12</td><td class=n>11</td><td class=n>28</td><td class=n>1</td></tr>
+<tr><td>tooling-other</td><td class=n>1</td><td class=n>3</td><td class=n>7</td><td class=n>10</td><td class=n>20</td><td class=n>1</td></tr>
+<tr><td>infra</td><td class=n>1</td><td class=n>3</td><td class=n>17</td><td class=n>11</td><td class=n>24</td><td class=n>8</td></tr>
+<tr><td colspan=7><strong>Documentation</strong></td></tr>
+<tr><td>docs-prospector-1</td><td class=n></td><td class=n></td><td class=n>17</td><td class=n>9</td><td class=n>26</td><td class=n></td></tr>
+<tr><td>docs-prospector-2</td><td class=n></td><td class=n>2</td><td class=n>11</td><td class=n>12</td><td class=n>24</td><td class=n>1</td></tr>
+<tr><td>docs-stocker</td><td class=n></td><td class=n></td><td class=n>14</td><td class=n>14</td><td class=n>28</td><td class=n></td></tr>
+<tr><td>docs-catalog</td><td class=n></td><td class=n>1</td><td class=n>10</td><td class=n>12</td><td class=n>22</td><td class=n>1</td></tr>
+<tr><td>docs-collect</td><td class=n></td><td class=n>2</td><td class=n>15</td><td class=n>9</td><td class=n>24</td><td class=n>2</td></tr>
+<tr><td>docs-venues</td><td class=n></td><td class=n></td><td class=n>18</td><td class=n>11</td><td class=n>27</td><td class=n>2</td></tr>
+<tr><td>docs-platform</td><td class=n></td><td class=n>2</td><td class=n>13</td><td class=n>11</td><td class=n>22</td><td class=n>4</td></tr>
+<tr><td>docs-tooling</td><td class=n></td><td class=n>1</td><td class=n>9</td><td class=n>10</td><td class=n>19</td><td class=n>1</td></tr>
+<tr><td>docs-consistency</td><td class=n></td><td class=n></td><td class=n>17</td><td class=n>15</td><td class=n>30</td><td class=n>2</td></tr>
+</tbody></table></div></section>
+<section><h2>Where the detail lives</h2>
+<p>Every commit message names the review item it addresses, so <code>git log --grep &lt;ID&gt;</code> finds the change for any item. The per-unit review reports (evidence, fixes, verifier notes) and the triage are in this session's scratchpad: <code>reviews/INDEX.md</code>, <code>reviews/&lt;unit&gt;.md</code>, <code>reviews/TRIAGE.md</code>. They disappear if the container is reclaimed; ask for them to be committed if you want to keep them.</p></section></div>

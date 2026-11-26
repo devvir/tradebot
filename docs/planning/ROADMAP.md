@@ -12,6 +12,9 @@ than in advance.
 **Read this first if you are picking up work.** It is the map. Every phase links to whatever decides
 its detail, where such a thing exists.
 
+The full review of November 2026, its decisions and what it left open for the owner are in
+[reviews/2026-11/HANDOFF.md](../../reviews/2026-11/HANDOFF.md).
+
 ---
 
 ## What this is building toward

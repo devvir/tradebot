@@ -1,0 +1,696 @@
+{
+ "unit": "infra",
+ "assessment": "Every deploy path in the infra layer is broken in at least one place, and most of the infra documentation describes files, variables, hostnames, modules and behaviour that no longer exist.\n\nBlockers:\n- The prod Node image starts dist/index.js. tsc writes dist/src/index.js, so every container built with APP_ENV=prod or with APP_ENV unset (the compose default is prod) crash-loops.\n- If you copy the shipped .env.example files as their own instructions say, every `VAR=   # comment` line becomes the literal comment text. That covers the project name, data paths, credentials, venue lists, lenses and token, so prospector and stocker crash-loop.\n- The shared external network compose expects (`${PROJECT_NAME:-tradebot}-network`) is never created. dx creates `${COMPOSE_PROJECT_NAME||dx}-network`, and setting COMPOSE_PROJECT_NAME to make the names match merges every module into one compose project.\n\nSecurity:\n- Every published port binds 0.0.0.0. That includes catalog-ui, an unauthenticated proxy that adds CATALOG_TOKEN to every request it forwards to the catalog and to prospector's private API, and it is also reachable by cross-site form posts. It also includes Redis (no auth when CACHE_PASS is empty), the RabbitMQ ports, and every :3000 health port.\n- .dockerignore matches only top-level paths, so module .env secrets, nested dist and node_modules, and tsbuildinfo end up in prod images.\n- The whole repo, every .env file included, is bind-mounted writable into every container, prod included.\n\nSmaller problems:\n- The RabbitMQ conf.d mount hides the image's defaults, including console logging.\n- Base images are unpinned, and RabbitMQ 3.12 is EOL.\n- infra/store and warehouse are the same compose project, packs reuse container names, and a bare `tb up` starts every pack.\n- The market pack's Redis answers as `redis` while CACHE_URL targets `cache`.\n- Test files are never type-checked: prospector's tests alone have 168 errors against outdated signatures.\n- Root lint, check and format scripts do nothing, and `pnpm test` fails at catalog-ui, which has no tests.\n- shared/* tsbuildinfo sits outside dist, so a rebuild emits nothing.\n- There is no CI. nx is configured but unused, and .github holds only Nx Cloud boilerplate.\n- Dependencies are unused, phantom or drifting, and @types/node 25 is used against a Node 22 runtime.\n- Coverage gates fail.\n- knip is misconfigured.\n- Env parsing, retry logic and the vault ledger format are copied across packages and behave differently.\n\nThree env parsers disagree on the same files. dx strips no comments, dev/tooling strips `\\s+#.*` even after an empty value, and compose strips only after a non-empty value. The .env.example fix (comments on their own lines) makes all three agree, and an automated `docker compose config` check over the examples should keep them that way.\n\nRestructuring recommendations, from both lenses:\n1. Pick one deploy story. The base service compose gets no /live mount and no host ports, and a dev-only override (added when APP_ENV=dev) adds them. The prod image becomes a `pnpm deploy` of one service. This fixes INF-01, INF-05, INF-11, INF-20 and INF-21 together, but it needs a mechanism, either in dx or in the compose files, to load a per-env override.\n2. Give network and project naming one owner. Settle on PROJECT_NAME for the network, never set COMPOSE_PROJECT_NAME, give every module and pack a unique explicit `name:`, and create the network from the in-repo `tb` wrapper until dx derives it itself.\n3. Create shared homes for copied logic: an env/config helper, a retry helper, a vault-format module, and the catalog schema next to shared/lenses.\n4. Add CI that runs build, per-package typecheck with tests included, tests, knip and the compose-render check. Most of these problems stayed hidden because nothing runs these checks.\n\nEnvironment notes, not counted as defects: pipe's integration tests need a Docker daemon (global-setup.ts), stocker's xlsx test needs network access, and prospector's 'refuses a catalog it cannot write' fails when the tests run as root. These tests should skip, not fail, when the dependency is missing.\n\ndx is a submodule and out of scope. Several symptoms originate there (parseEnvFile keeps inline comments, ensureNetworkExists passes an unquoted name into a shell string, and there is no per-env override), and those should be raised with dx's owner.",
+ "items": [
+  {
+   "id": "INF-01",
+   "title": "Prod Node image CMD runs dist/index.js, but every service compiles to dist/src/index.js, so every prod container crash-loops",
+   "severity": "critical",
+   "category": "correctness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docker/prod.node.Dockerfile:53",
+    "docker/prod.node.Dockerfile:62",
+    "docker/node/entrypoint.sh:23",
+    "services/{catalog,catalog-ui,hauler,hoarder,pipe,prospector,router,stocker,vault}/package.json:5 (main)",
+    "services/*/tsconfig.json",
+    "docker/README.md:83"
+   ],
+   "problem": "Service tsconfigs set outDir ./dist and composite true, with no rootDir, so tsc writes dist/src/index.js. The prod Dockerfile runs `node ... dist/index.js` from WORKDIR /app/services/${SERVICE_NAME}, and that file is never produced. Every service compose file selects docker/${APP_ENV:-prod}.node.Dockerfile, and none overrides `command`. With APP_ENV=prod or unset, every Node service exits with MODULE_NOT_FOUND and `restart: unless-stopped` restarts it forever. The dev entrypoint and every `start` script already use dist/src/index.js. Only `main` and docker/README.md repeat the wrong path. The root .env.example sets APP_ENV=dev, which is why nobody noticed.",
+   "evidence": "`ls services/*/dist` shows only src/, tsconfig.tsbuildinfo, and web/ for catalog-ui. Running `node dist/index.js` in services/catalog gives `Cannot find module '/home/user/tradebot/services/catalog/dist/index.js'`. Both lenses and all four verifier passes reproduced it.",
+   "fix": "1. Change docker/prod.node.Dockerfile:62 to `CMD [\"/bin/sh\", \"-c\", \"exec node --max-old-space-size=${NODE_MEMORY_MB} dist/src/index.js\"]`. Do not use `pnpm start`: it puts pnpm and corepack between dumb-init and node and drops the memory flag.\n2. In the builder, after `RUN pnpm run build`, add `RUN test -f services/${SERVICE_NAME}/dist/src/index.js || (echo \"missing dist/src/index.js for ${SERVICE_NAME}\" && exit 1)`.\n3. Set `main` to `dist/src/index.js` in all nine service package.json files, or drop the field.\n4. Fix docker/README.md:83, either as part of INF-12 or before it.\n5. Do NOT switch the service tsconfigs to rootDir ./src. catalog-ui's routes.ts:27 resolves join(__dirname,'..','..','web') from dist/src/api, and prospector's build copies seeds into dist/src/database/migrations/seeds.",
+   "tests": "Add a small vitest test, for example in dev/tooling or at the root, that reads each services/*/package.json and asserts that `main` equals the path in the start script. Where a daemon is available, add a CI smoke step: build one prod image (`docker build -f docker/prod.node.Dockerfile --build-arg SERVICE_NAME=catalog .`) and run `node -e \"require.resolve('./dist/src/index.js')\"` inside it.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-02",
+   "title": "Inline comments after empty values in .env.example files become literal values in compose: broken project name, paths, credentials, venue lists, lenses and token",
+   "severity": "high",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    ".env.example:15",
+    ".env.example:23",
+    ".env.example:24",
+    ".env.example:25",
+    ".env.example:33",
+    ".env.example:34",
+    ".env.example:45",
+    "modules/collect/archives/.env.example:42",
+    "modules/collect/archives/.env.example:48",
+    "modules/collect/archives/.env.example:49",
+    "modules/store/warehouse/.env.example:11",
+    "modules/store/warehouse/.env.example:14",
+    "modules/store/warehouse/.env.example:15",
+    "dev/tooling/src/shared/utils/env.ts:28-30",
+    "dx/utils/env.js (out of scope)"
+   ],
+   "problem": "dx runs `docker compose --env-file <root .env> --env-file <module .env>`, so compose's dotenv parser reads these files. Compose strips an inline `# comment` only when it follows a non-empty unquoted value. For `VAR=      # comment`, the value is the comment text itself. That value is non-empty, so `${VAR:-}` defaults never apply. The READMEs tell operators to copy .env.example to .env. Doing that produces these failures:\n- An invalid project name.\n- DATA_ARCHIVES_DIR set to '# Host data root/archives'.\n- QUEUE_USER, QUEUE_PASS and CACHE_PASS set to the publicly known string '# (required)'.\n- PROSPECTOR_VENUES and STOCKER_VENUES set to sentences, so prospector and stocker crash-loop on an unknown venue or token.\n- HAULER_LENS and STOCKER_LENS set to sentence-long slugs.\n- stocker sending the comment text as CATALOG_TOKEN.\n\nThe three parsers disagree. dev/tooling's parser strips these comments and its own comment claims this matches compose, which is false. dx's parser strips no comments at all.",
+   "evidence": "Reproduced with docker compose v5.7.1 on unmodified copies of the example files:\n- `A=   # c` gives '# c'.\n- `B=\"\" # c` gives empty, so the default applies.\n- `C=x # c` gives 'x'.\n- Root example: `invalid project name \"# Override project name globally\"`.\n- Archives: `PROSPECTOR_VENUES: '# Default: <empty> (all). CSV of: ...'`.\n- Warehouse: `CATALOG_TOKEN: '# The catalog''s shared secret; empty where it has none'`.\n- infra/local: `RABBITMQ_DEFAULT_USER: '# (required)'`.\n\nprospector/src/config.ts:66 and stocker/src/config.ts parseKnown throw on these values.",
+   "fix": "1. In all three .env.example files, move every trailing comment on an empty-valued line onto its own `#` line directly above the variable, leaving bare `VAR=`. For consistency, and because dx's parser strips nothing, move the comments on non-empty lines too.\n2. Delete the COMPOSE_PROJECT_NAME line (see INF-03).\n3. Fix the misleading comment at dev/tooling/src/shared/utils/env.ts:28-30. Preferably make that parser match compose: keep the comment as the value when the value is empty, or reject such lines.\n4. Apply this before INF-09, otherwise the `:?` guards never fire.",
+   "tests": "Add a docker-free vitest test that scans every **/.env.example and fails on any line matching `^[A-Z_]+=\\s*#` or `^[A-Z_]+=.*\\s#`. Where docker is available, add a CI step that copies each example verbatim, fills only DATA_DIR and CATALOG_DIR with temp dirs, and runs `docker compose -f modules/<m>/compose.yml --env-file <root> --env-file <module> config --format json` for every module and pack. The step fails on a non-zero exit or on any rendered value or volume source that starts with '#'.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-03",
+   "title": "The shared external network name never matches what `tb` creates, and the only workaround (COMPOSE_PROJECT_NAME) merges every module into one compose project",
+   "severity": "high",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "modules/collect/archives/compose.yml:30-33",
+    "modules/store/warehouse/compose.yml:19-22",
+    "modules/infra/local/compose.yml:57-60",
+    "modules/infra/store/compose.yml:38-41",
+    "modules/infra/market/compose.yml:42-45",
+    "modules/infra/shuttle/compose.yml:28-31",
+    "modules/infra/bootcamp/compose.yml:26-29",
+    ".env.example:14-15",
+    "tb",
+    "modules/infra/README.md:3",
+    "dx/utils/docker.js:60,77 (out of scope)"
+   ],
+   "problem": "All seven compose files declare `networks.default: {name: ${PROJECT_NAME:-tradebot}-network, external: true}`. The only code in the repo that creates a network is dx's ensureNetworkExists(`${COMPOSE_PROJECT_NAME || 'dx'}-network`).\n- With COMPOSE_PROJECT_NAME empty, dx creates dx-network, and every `tb up` fails on the missing external tradebot-network.\n- With the example copied verbatim, dx reads the comment text, the `#` comments out the rest of its shell command, and nothing is created. The failure is only logged as a warning.\n- Setting COMPOSE_PROJECT_NAME=tradebot makes the names match, but it overrides every file's top-level `name:`. All modules and packs then share one project, each `up` reports the others as orphans, and `--remove-orphans` stops brokers and services.",
+   "evidence": "Grep finds no creator of tradebot-network. With COMPOSE_PROJECT_NAME=tradebot, `docker compose config` prints `name: tradebot` for archives, which declares `collect`, and for infra/local, which declares `infrastructure`. dx's parseEnvFile returns COMPOSE_PROJECT_NAME='# Override project name globally'.",
+   "fix": "1. Delete the COMPOSE_PROJECT_NAME line from .env.example. Next to PROJECT_NAME, add a comment on its own line saying that PROJECT_NAME only names the shared network `${PROJECT_NAME}-network` and that COMPOSE_PROJECT_NAME must not be set.\n2. In the in-repo `tb` wrapper, before `exec node dx.js`, read PROJECT_NAME from the environment or the root .env (default tradebot) and run `docker network inspect \"${PROJECT_NAME}-network\" >/dev/null 2>&1 || docker network create \"${PROJECT_NAME}-network\" >/dev/null`. Leave the compose files' network name as it is.\n3. Document in modules/infra/README.md that `tb` creates the shared network if it is missing.\n4. Raise with dx's owner that dx should derive the network from PROJECT_NAME, strip inline comments in parseEnvFile, quote the name in its shell call, and fail instead of warning.\n\nREJECTED alternative: `${COMPOSE_PROJECT_NAME:-dx}-network` in the compose files. Compose fills that variable with each file's own project name, so every module would get its own network (see Rejected).",
+   "tests": "Add a script or CI step that runs `docker compose config` in every modules/** directory with the example env. Every module must print the same networks.default.name, and each module must keep its own top-level `name:`. Smoke test on a docker host: on a fresh daemon, `tb up local`, then `tb up archives`, then `docker network ls` shows tradebot-network.",
+   "owner_question": "Keep the network name tradebot-network (PROJECT_NAME), as assumed here, or adopt dx's convention? Will you change dx upstream to derive the network from PROJECT_NAME so the `tb` bootstrap can be removed later?"
+  },
+  {
+   "id": "INF-04",
+   "title": "catalog-ui (an unauthenticated proxy that adds CATALOG_TOKEN), the catalog, Redis, RabbitMQ, vault and every :3000 health port are published on all host interfaces",
+   "severity": "high",
+   "category": "security",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/catalog-ui/docker/compose.yml:47-52",
+    "services/catalog-ui/src/api/routes.ts:30-31",
+    "services/catalog-ui/src/api/routes.ts:52-68",
+    "services/catalog/docker/compose.yml:41-46",
+    "services/{catalog,catalog-ui,hauler,hoarder,prospector,router,stocker}/docker/compose.yml (- :3000)",
+    "services/vault/docker/compose.yml:11-13",
+    "services/redis/docker/compose.yml:12-13",
+    "services/rabbitmq/docker/compose.yml:10-12",
+    "modules/infra/local/compose.yml:35-36,45-46",
+    "modules/infra/store/compose.yml:17-18",
+    "modules/infra/market/compose.yml:21-22",
+    "modules/collect/archives/.env.example:22-38",
+    ".env.example:30",
+    "docs/modules/ARCHIVES.md:53,90"
+   ],
+   "problem": "No published port sets a host IP, so Docker binds 0.0.0.0 and its iptables rules bypass ufw. An empty host port such as `${X:-}:8080` or `:3000` still publishes, on a random port.\n\ncatalog-ui on 9020 is the worst case. forward() passes any method, path and body to the catalog and to prospector's private collector API, adds `x-catalog-token`, and checks nothing about the caller. Anyone who reaches host:9020 can therefore do the following, and CATALOG_TOKEN protects nothing:\n- start or pause surveys; a bodyless POST /surveys/pause pauses all venues, and `refresh:true` discards progress\n- create, edit or delete lenses on both services\n- post download reports\n\nBinding to loopback alone is not enough. service-kit installs only express.json, so a cross-site text/plain or form POST leaves the body unparsed, and forward() then sends `{}` as JSON, with the token, to the upstream. Any page the operator opens can therefore start or pause surveys on a loopback-bound UI.\n\nThe archives .env.example implies that an empty CATALOG_PORT keeps the catalog internal. It does not.",
+   "evidence": "In the rendered config, every port has mode ingress and no host_ip, and catalog-ui has `published: \"9020\"`. routes.ts:30-31 mounts forward() for /api/catalog and /api/prospector, and forward() sends method: req.method plus the token header. The CSRF path was traced through service-kit express.ts:278 (json only) and prospector collector.ts:17,31-39 (a missing venue means all venues).",
+   "fix": "Do now:\n1. Bind every published port to loopback by default, with an opt-in variable, for example `\"${CATALOG_UI_BIND:-127.0.0.1}:${CATALOG_UI_PORT:-9020}:8080\"` and `\"${CATALOG_BIND:-127.0.0.1}:${CATALOG_PORT:-}:8080\"`. Apply the same pattern to QUEUE_PORT, QUEUE_MGMT_PORT, QUEUE_RT_PORT, QUEUE_RT_MGMT_PORT, CACHE_PORT and VAULT_PORT, in both the service files and the infra packs that re-declare ports. Document the *_BIND variables in the .env.example files: use 0.0.0.0 only when another host must connect, and in that case also set CATALOG_TOKEN.\n2. Remove every `- :3000` host publication. Healthchecks run inside the container, and nothing reads the published port.\n3. In catalog-ui forward(), answer 415 to any non-GET/HEAD request whose Content-Type is not application/json. A JSON content type forces a CORS preflight, which the UI never answers. Optionally also reject a request whose Origin differs from its own host.\n4. Fix the docs and comments: the CATALOG_PORT and CATALOG_TOKEN comments in the archives .env.example, the catalog-ui compose comment, docs/modules/ARCHIVES.md, and the 'private' wording in catalog-ui config.ts:15-18 and prospector api/collector.ts:8. They should say that whoever reaches catalog-ui acts with the token.\n\nDeferred to the owner: whether catalog-ui needs its own credential before it forwards mutating requests (see owner_question).",
+   "tests": "Add a catalog-ui vitest test with a stubbed fetch or a stub upstream:\n- POST /api/prospector/surveys/pause with text/plain returns 415 and never calls upstream.\n- POST with application/json is forwarded with x-catalog-token.\n- GET passes status and body through.\n\nThis also gives catalog-ui its first test (INF-13). Add a CI or compose-render check that every ports entry has host_ip 127.0.0.1 unless a *_BIND variable overrides it.",
+   "owner_question": "Should catalog-ui get its own credential, such as a CATALOG_UI_PASSWORD checked as basic auth before forwarding, or a CATALOG_UI_WRITE flag that otherwise allows only GET/HEAD? Today it gives token-holder rights to anyone who can reach it. Is remote access over an SSH tunnel acceptable with the loopback default?"
+  },
+  {
+   "id": "INF-05",
+   "title": ".dockerignore matches only top-level paths, so module .env secrets, nested dist, node_modules and tsbuildinfo are baked into prod images",
+   "severity": "medium",
+   "category": "security",
+   "decision": "IMPLEMENT",
+   "locations": [
+    ".dockerignore:7-18",
+    "docker/prod.node.Dockerfile:13",
+    "docker/prod.node.Dockerfile:50",
+    "docker/prod.python.Dockerfile:17"
+   ],
+   "problem": "Docker matches .dockerignore patterns against the context root, so `.env`, `node_modules/`, `dist/`, `coverage/` and `*.tsbuildinfo` exclude only top-level entries. The build context is the repo root. `COPY . .` followed by `COPY --from=builder /app .` therefore puts the following into the final image:\n- modules/*/.env and .env.<APP_ENV>, which hold CATALOG_TOKEN\n- dev/tooling/.env, which holds QUEUE_URL credentials\n- root .env.dev and .env.prod (only `.env.*.local` is excluded)\n- nested node_modules, the host-built dist and tsbuildinfo, .pnpm-store, .nx and services/.deprecated\n\nThe build is also not hermetic: leftover dist files from deleted sources ship, and a module .env edit invalidates the install layer.",
+   "evidence": "Docker's documented root-relative matching applies, and `**/` is needed to match at depth. `find` shows services/*/dist, services/*/node_modules and shared/*/tsconfig.tsbuildinfo in the tree. dx/utils/docker.js:157-170 loads modules/<m>/.env from the same checkout.",
+   "fix": "Rewrite .dockerignore with recursive patterns: `**/.git`, `**/.env`, `**/.env.*`, `!**/.env.example`, `**/node_modules`, `**/dist`, `**/coverage`, `**/*.tsbuildinfo`, `**/.pnpm-store`, `**/.nx`, `**/.venv`, `**/__pycache__`, `**/.deprecated`, `**/tests/.env.testing`. Keep the existing docs and IDE entries. Do NOT exclude `dev/` or `dx`: both are workspace members and lockfile importers, and excluding them changes how `pnpm install` resolves. Use `pnpm install --frozen-lockfile` (INF-11) so that any mismatch between context and lockfile fails loudly. Rebuild existing images. Rotate CATALOG_TOKEN if images ever left the host.",
+   "tests": "Throwaway check: a busybox Dockerfile that does `COPY . /ctx` and then runs `find /ctx -name '.env*' -o -name '*.tsbuildinfo' -o -name dist -o -name node_modules`, built against the repo root, prints nothing apart from .env.example files. After building a prod image, `docker run --rm --entrypoint sh <img> -c 'find /app -name \".env*\" ! -name .env.example'` prints nothing. Add both to CI where a daemon is available.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-06",
+   "title": "Test files are never type-checked; prospector's tests alone have 168 errors, many against outdated signatures",
+   "severity": "medium",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/*/tsconfig.json (include src/**)",
+    "shared/*/tsconfig.json",
+    "dev/tooling/tsconfig.json:8",
+    "services/prospector/tests/job.test.ts:47,103",
+    "services/prospector/tests/bootstrap.test.ts:34",
+    "services/catalog/tests/lens.test.ts:125",
+    "services/stocker/tests/vault.test.ts:73"
+   ],
+   "problem": "Every tsconfig includes only src/**, and vitest strips types without checking them. Type-checking tests against their package's src finds these errors:\n- prospector 168\n- dev/tooling 28\n- catalog 8\n- hauler 8\n- hoarder 8\n- vault 7\n- stocker 5\n\nMuch of this is real drift. For example, 24+ job.test.ts calls pass 3 arguments to surveyVenue, which now takes (db, adapter, config, occasion, paused?). They exercise `occasion === undefined`, a value production never passes. Fake adapters lack getContext/confirm. Config literals miss fields. LensRule literals do not match the type. These tests pass while testing API shapes that no longer exist.",
+   "evidence": "Scratch tsconfigs that include tests, under scratch/tsc/*.json, report 168 errors for prospector (104 TS2345, 33 TS2554, 9 TS2741). Example: `tests/job.test.ts(103,27): error TS2554: Expected 4-5 arguments, but got 3.`",
+   "fix": "1. In each package, add tsconfig.test.json: `{\"extends\":\"./tsconfig.json\",\"compilerOptions\":{\"noEmit\":true,\"composite\":false,\"incremental\":false,\"rootDir\":\".\"},\"include\":[\"src/**/*\",\"tests/**/*\"]}`. Point typeRoots at the root node_modules/@types if `types:[\"node\"]` gives TS2688.\n2. Add a `typecheck: tsc -p tsconfig.test.json` script to each package, and have the root run `pnpm -r --if-present typecheck` (see INF-13).\n3. Fix the errors, starting with prospector:\n   - Pass an explicit occasion to every surveyVenue call.\n   - Build one typed fake-adapter factory in tests/setup.ts that includes getContext and confirm.\n   - Make the probe and s3 helpers build a real ListingContext or Work.\n4. Fix the bootstrap venueId literal and the catalog LensRule literals.",
+   "tests": "Add one prospector test per Occasion value, asserting the run kind (walk or update) and the occasion passed to getContext. The typecheck script becomes a CI gate (INF-15).",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-07",
+   "title": "Compose project and container name collisions: infra/store and warehouse are both project \"store\", local and bootcamp are both \"infrastructure\", and a bare `tb up` starts every pack",
+   "severity": "medium",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "modules/infra/store/compose.yml:1-20",
+    "modules/store/warehouse/compose.yml:14",
+    "modules/infra/local/compose.yml:13",
+    "modules/infra/bootcamp/compose.yml:8",
+    "modules/infra/market/compose.yml:19",
+    "modules/infra/shuttle/compose.yml:18",
+    "dx/utils/docker.js:55-71 (out of scope)"
+   ],
+   "problem": "These name collisions cause the problems below:\n- infra/store has no `name:`, so compose names it `store`, which is also the name modules/store/warehouse declares. Each project lists the other's containers as orphans, and `--remove-orphans` on either one removes the brokers or stocker.\n- local and bootcamp are both `name: infrastructure`, so `tb down bootcamp` stops the queue-rt that local relies on.\n- Every pack hard-codes `container_name: queue` and/or `queue-rt`.\n- With no module named, dx loops over every module, including all five packs, because no `.dxskip` file exists. The run aborts with 'container name \"/queue-rt\" is already in use'.",
+   "evidence": "`docker compose config` prints `name: store` for both modules/infra/store and modules/store/warehouse. `find modules -name .dxskip` returns nothing.",
+   "fix": "1. Rename the warehouse project to `name: warehouse`. This loses no volumes, because stocker uses bind mounts. On existing hosts, run `docker rm -f stocker` once first.\n2. Give every pack an explicit, unique `name:`. Compose prefixes named volumes with the project name, so keep the names that already resolve uniquely to preserve broker data volumes: `store` (once warehouse is renamed), `market` and `shuttle`. Keep `infrastructure` for local and rename bootcamp to `infra-bootcamp`, noting that bootcamp's queue-rt volume resets, or migrate it.\n3. Commit an empty `.dxskip` in each modules/infra/<pack>/, so packs start only when named. State this in modules/infra/README.md.\n4. COMPOSE_PROJECT_NAME is removed in INF-03.",
+   "tests": "Run `docker compose config | grep ^name` in every modules/** directory and assert the names are unique. Add this to the compose-render CI check.",
+   "owner_question": "Is resetting bootcamp's queue-rt volume acceptable, or should the volume be migrated? Alternatively, keep bootcamp as `infrastructure` and rename local."
+  },
+  {
+   "id": "INF-08",
+   "title": "Infra config contradicts itself: market's Redis answers as `redis` while CACHE_URL targets `cache`; local has no `queue` although docs say it does; stale VAULT_URL and REGISTRY_* entries",
+   "severity": "medium",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "modules/infra/market/compose.yml:10-11",
+    "modules/infra/local/compose.yml:16-26",
+    "modules/infra/local/compose.yml:40",
+    ".env.example:17-20",
+    ".env.example:22-30",
+    ".env.example:35-38",
+    ".env.example:44-47",
+    "modules/infra/README.md:20-24,42,44",
+    "services/vault/src/server/index.ts:13",
+    "services/vault/README.md:26"
+   ],
+   "problem": "The infra config disagrees with itself in four places:\n- local defines `cache` with `extends`, which matches CACHE_URL=...@cache:6379. market `include`s services/redis/docker/compose.yml, whose service is `redis`, so `cache` does not resolve on a market host. The README table says `redis`.\n- local has `queue` commented out, while .env.example and modules/infra/README.md list local as providing it. hoarder, pipe, router and the tooling, which use QUEUE_URL, cannot connect against the local pack. No module wires those services in today, so the breakage is latent.\n- `VAULT_URL=http://vault` has no port: vault listens on 8000, and its README says 80. Nothing consumes VAULT_URL.\n- REGISTRY_* refers to a service that does not exist. DATA_VAULT_DIR, the Parquet vault, sits next to a 'Vault Service' block for a different CSV dump service.",
+   "evidence": "The rendered market config has service `redis` and no `cache` alias. Every line of local compose.yml:16-26 is commented out. Grep finds no consumer of REGISTRY_* or VAULT_URL.",
+   "fix": "1. In market/compose.yml, replace the include with `cache:` using `extends: {file: ../../../services/redis/docker/compose.yml, service: redis}`, plus `container_name: cache` and its own `cache-data` volume, as local does. Change the README table and the pack header comments to `cache`.\n2. Remove `local` from the queue roles in .env.example:35 and mark queue as absent for local in modules/infra/README.md:44 and in the local header comment. If you prefer, uncomment queue instead (owner decision).\n3. Delete the REGISTRY_* block and VAULT_URL. Keep VAULT_PORT and VAULT_COMPRESSION_LEVEL only under a block labelled 'services/vault (raw dump service)', or remove them. Fix services/vault/README.md:26 to say port 8000.\n4. Reword DATA_VAULT_DIR as 'the Parquet vault stocker writes'.",
+   "tests": "Make the compose-render check assert that every pack providing Redis exposes a service or hostname named `cache`.",
+   "owner_question": "Should the local pack run `queue` again (uncomment it), or is it intentionally queue-rt only?"
+  },
+  {
+   "id": "INF-09",
+   "title": "Redis and RabbitMQ credentials are not enforced: an empty CACHE_PASS gives a no-auth Redis, the Redis password sits in the healthcheck argv, QUEUE_* falls back to guest, and passwords are not URL-encoded",
+   "severity": "medium",
+   "category": "security",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/redis/docker/compose.yml:10",
+    "services/redis/docker/compose.yml:18",
+    "services/redis/docker/compose.yml:21",
+    "services/rabbitmq/docker/base.yml:9-10",
+    ".env.example:38-47"
+   ],
+   "problem": "The password handling has four gaps:\n- `--requirepass \"${CACHE_PASS}\"` with an empty value disables auth. The official image also disables protected-mode, and the port is public (INF-04).\n- The healthcheck runs `redis-cli -a <pass>` every 30s, so the password is visible in docker inspect and the host's ps.\n- RabbitMQ falls back to guest/guest. Through the published ports this fails closed, because guest is loopback-only, but it still lets the stack start with a broker nobody else can log into.\n- QUEUE_URL and CACHE_URL interpolate raw passwords, so a password containing @ : / # % ? does not parse.",
+   "evidence": "The rendered local pack shows `--requirepass, \"\"` and healthcheck `[CMD, redis-cli, -a, \"\", ping]`. base.yml:9 is `${QUEUE_USER:-guest}`.",
+   "fix": "1. In redis compose.yml, use `--requirepass \"${CACHE_PASS:?CACHE_PASS is required}\"` and `CACHE_PASS: ${CACHE_PASS:?CACHE_PASS is required}`.\n2. Replace the healthcheck with `test: [\"CMD-SHELL\", \"REDISCLI_AUTH=\\\"$$CACHE_PASS\\\" redis-cli ping | grep -q PONG\"]`.\n3. In rabbitmq base.yml, use `${QUEUE_USER:?QUEUE_USER is required}` and `${QUEUE_PASS:?QUEUE_PASS is required}`.\n4. In .env.example, state that QUEUE_PASS and CACHE_PASS must be URL-safe.\n5. Apply after INF-02. Check that the market and local packs, which reuse the redis file, still render.",
+   "tests": "The compose-render check: with CACHE_PASS empty, `docker compose config` on infra/local fails with 'CACHE_PASS is required', and with it set, the rendered healthcheck does not contain the password.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-10",
+   "title": "Mounting services/rabbitmq/docker over /etc/rabbitmq/conf.d hides the image's 10-defaults.conf, so console logging is lost and the guest policy changes",
+   "severity": "medium",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/rabbitmq/docker/base.yml:15",
+    "services/rabbitmq/docker/rabbitmq.conf:1-18",
+    "services/rabbitmq/README.md:26"
+   ],
+   "problem": "`- .:/etc/rabbitmq/conf.d:ro` replaces the image's conf.d, which ships 10-defaults.conf with `log.console = true` and `loopback_users.guest = false`, and it also mounts the compose files into the broker's config dir. As a result:\n- Broker logs go to /var/log/rabbitmq in the container layer, so `docker logs` shows almost nothing.\n- guest silently becomes loopback-only, which contradicts the README's 'from any host'.",
+   "evidence": "Upstream Dockerfile-alpine.template COPYs 10-defaults.conf into conf.d, and that file contains log.console = true. The rendered config shows the directory bind-mounted at the conf.d target.",
+   "fix": "1. In base.yml, replace line 15 with `- ./rabbitmq.conf:/etc/rabbitmq/conf.d/90-tradebot.conf:ro`. Keep the advanced.config mount.\n2. Add `log.console = true` to rabbitmq.conf explicitly. Also add `loopback_users.guest = true` so guest stays local-only, which pairs with INF-09's required credentials.\n3. Update the README (INF-22).",
+   "tests": "Manual check: `docker compose -f modules/infra/bootcamp/compose.yml up -d queue-rt`. `docker logs queue-rt` shows the boot banner. `docker exec queue-rt ls /etc/rabbitmq/conf.d` lists only 10-defaults.conf and 90-tradebot.conf.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-11",
+   "title": "Prod Node build is not reproducible: unfrozen lockfile, image user is root, the whole workspace is built for each service, and corepack is needed at runtime",
+   "severity": "medium",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docker/prod.node.Dockerfile:19",
+    "docker/prod.node.Dockerfile:26",
+    "docker/prod.node.Dockerfile:47",
+    "docker/prod.node.Dockerfile:50-62"
+   ],
+   "problem": "The prod build has these problems:\n- `RUN pnpm install` runs without --frozen-lockfile and without CI set, so a lockfile that has drifted from package.json is silently re-resolved. This was reproduced in scratch.\n- The image has no USER, so it runs as root unless compose overrides it.\n- `pnpm run build` builds every workspace package for every image.\n- `corepack enable` in the runtime stage is not needed once CMD calls node directly (INF-01).",
+   "evidence": "prod.node.Dockerfile:19 `RUN pnpm install` and :26 `RUN pnpm run build`. There is no USER line. Without CI=true, pnpm rewrote the lockfile; with CI=true it refused.",
+   "fix": "Quick wins, to land with INF-01 and INF-05:\n1. Change :19 to `RUN CI=true pnpm install --frozen-lockfile`.\n2. Add `USER node` before CMD.\n3. Drop the runtime `corepack enable`.\n4. Optionally use `pnpm --filter \"@tradebot/${SERVICE_NAME}...\" run build`, after checking the package names, because some dependencies are @devvir/* submodules.\n\nThe layer-caching and `pnpm deploy` restructure is INF-21.",
+   "tests": "Build the stocker image. `docker run --rm --entrypoint sh <img> -c 'id -u'` prints 1000. Building with a deliberately stale lockfile fails.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-12",
+   "title": "docker/README.md describes a Dockerfile, npm build and 'minimal image' that do not exist",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docker/README.md:7",
+    "docker/README.md:32",
+    "docker/README.md:46-56",
+    "docker/README.md:67",
+    "docker/README.md:70-75",
+    "docker/README.md:83"
+   ],
+   "problem": "The README is wrong in several places:\n- It documents `docker/node.Dockerfile`. The real files are dev.node, prod.node, dev.python and prod.python, and compose selects `docker/${APP_ENV:-prod}.node.Dockerfile`.\n- It describes npm ci and `npm ci --omit=dev`. The build uses pnpm.\n- It describes a selective-copy minimal image. The image copies all of /app.\n- It says test files are used in the build. tsconfigs exclude them.\n- It says .env* is excluded. Only three patterns are.\n- It gives the entry point as dist/index.js, which is the bug in INF-01.\n- It never mentions the dev image and its /live workflow.",
+   "evidence": "`ls docker` shows the four real files. The README says `npm ci` at :49 and 'Entry point at dist/index.js' at :83.",
+   "fix": "Rewrite the README around the real files, in present tense only, without naming consuming services, following CLAUDE.md. Cover:\n(a) How APP_ENV selects the Dockerfile, with the build context at the repo root.\n(b) dev.node: node:22-alpine with dumb-init, user node (uid 1000), and no build step. It runs services/$SERVICE_NAME/dist/src/index.js from the /live mount, which is whatever the host's last `pnpm build` produced. The pnpm store is at /live/.pnpm-store.\n(c) prod.node: as it is after INF-01, INF-05 and INF-11.\n(d) The SERVICE_NAME and NODE_MEMORY_MB build args. Data dirs must be owned by uid 1000.\n(e) What .dockerignore actually excludes.\nRemove the Python section if INF-18 deletes those files. Land this together with or after INF-01.",
+   "tests": "None. Review against the Dockerfiles.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-13",
+   "title": "Root lint, check and format scripts do nothing and fail, `pnpm dev` starts every service on the host, and `pnpm test` fails at catalog-ui, which has no test files",
+   "severity": "medium",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "package.json:12-17",
+    "services/catalog-ui/package.json:10",
+    ".prettierrc"
+   ],
+   "problem": "No workspace package defines lint, check or format, and neither prettier nor eslint is installed, although .prettierrc exists. `pnpm -r lint` and `pnpm -r check` exit 1. catalog-ui runs `vitest run` with no test files, so it exits 1 and `pnpm -r test` stops there. `pnpm dev` runs every package's ts-node or vite on the host, which collide on port 3000 and never exit.",
+   "evidence": "`pnpm -r lint` fails with '\"pnpm recursive exec\" failed in /home/user/tradebot/dx'. `pnpm --filter @tradebot/catalog-ui test` fails with 'No test files found'.",
+   "fix": "1. Remove the root `lint` and `dev` scripts.\n2. Add prettier as a root devDependency, with `format: prettier --write .` and `format:check: prettier --check .`.\n3. Make `check` run `pnpm -r --if-present typecheck && knip` once INF-06 and INF-25 land.\n4. Give catalog-ui a real test (see INF-04), or as a stopgap use `vitest run --passWithNoTests`.\n5. Consider `pnpm -r --no-bail test` so one failure does not hide the rest.",
+   "tests": "The catalog-ui forward() test from INF-04. Root `pnpm test` then exits 0.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-14",
+   "title": "shared/* and dev/tooling write tsbuildinfo outside dist, so a rebuild after deleting dist emits nothing",
+   "severity": "medium",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "shared/utils/tsconfig.json:3-7",
+    "shared/types/tsconfig.json:3-7",
+    "shared/lenses/tsconfig.json:3-7",
+    "dev/tooling/tsconfig.json",
+    "nx.json:10-17"
+   ],
+   "problem": "These packages set rootDir ./src, outDir ./dist and composite, so the tsbuildinfo lands at the package root. After `rm -rf dist` or a branch switch, `tsc` sees the old buildinfo, emits nothing and exits 0. Consumers then fail with a confusing 'cannot find module dist/index.js'. Prod Docker builds are unaffected once INF-05 excludes tsbuildinfo.",
+   "evidence": "Reproduced on a copy of shared/types with TS 5.9.3: after `rm -rf dist`, both `tsc` and `tsc -b` exit 0 and no dist exists.",
+   "fix": "Add `\"tsBuildInfoFile\": \"./dist/tsconfig.tsbuildinfo\"` to the four tsconfigs. Delete the stale root-level tsbuildinfo files locally; they are gitignored.",
+   "tests": "`pnpm --filter @tradebot/types build && rm -rf shared/types/dist && pnpm --filter @tradebot/types build && test -f shared/types/dist/index.js`. This could be a CI step.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-15",
+   "title": "No CI: nothing runs build, typecheck, tests, knip or the compose checks",
+   "severity": "medium",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    ".github/ (no workflows/)",
+    "nx.json:3-8"
+   ],
+   "problem": "There is no .github/workflows, so every check proposed in this report is enforced nowhere. Most of these defects stayed hidden for exactly this reason. Separately, nx.json's test `dependsOn: ['^test']` should be `^build`, because services import shared packages from dist, and the `@nx/vitest:test` default applies to no project.",
+   "evidence": "`ls .github/workflows` reports 'No such file'.",
+   "fix": "Add .github/workflows/ci.yml: run on push and pull_request, on ubuntu-latest. Use actions/checkout with `submodules: recursive`, setup-node 22 and `corepack enable`. Then run `pnpm install --frozen-lockfile`, `pnpm -r build`, `pnpm -r --if-present typecheck` (INF-06), `pnpm -r test`, the .env.example lint test (INF-02), the compose-render check (INF-02, INF-03, INF-04, INF-07) and `npx knip` after INF-25. Skip environment-dependent tests, such as pipe's docker integration tests and stocker's networked xlsx test, when their dependency is missing. Fix nx.json now as well: `^build`, and drop the @nx/vitest block.",
+   "tests": "The workflow itself.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-16",
+   "title": "CATALOG_DIR is documented as defaulting under the data root but has no default, so `tb up archives` aborts",
+   "severity": "medium",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "modules/collect/archives/.env.example:9-16",
+    ".env.example:23-25",
+    "services/prospector/docker/compose.yml:61",
+    "services/catalog/docker/compose.yml:39",
+    "dev/tooling/src/tools/cold/config.ts:79",
+    "dev/tooling/src/shared/utils/env.ts:59-64",
+    "shared/utils/src/testing/env.ts:36-37"
+   ],
+   "problem": "archives/.env.example says CATALOG_DIR 'Defaults under the shared data root' and leaves it empty. Both compose files use `${CATALOG_DIR:?}`, which also rejects empty values, and the root .env.example does not define it. dev/tooling does default it to DATA_DIR/catalog, so tooling and compose disagree. Once the comment from INF-02 is removed, an empty DATA_DIR makes DATA_ARCHIVES_DIR resolve to `/archives`. Docker then creates a root-owned /archives on the host's root filesystem, which uid 1000 cannot write.",
+   "evidence": "Rendering with CATALOG_DIR empty fails with 'required variable CATALOG_DIR is missing a value'.",
+   "fix": "1. Add `CATALOG_DIR=${DATA_DIR}/catalog` to the root .env.example, next to DATA_ARCHIVES_DIR. Delete the module's empty `CATALOG_DIR=` line, because an empty module value would override the root default. Keep only a comment saying it can be overridden with an absolute host path.\n2. Mark DATA_DIR as required in its own-line comment.\n3. Do NOT write `${DATA_DIR:?}` into the .env files unless dev/tooling's loadEnv and shared/utils' parseEnvFile learn the `:?` and `:-` modifiers. Today they would look up the key 'DATA_DIR:?...' and silently produce '/archives'.",
+   "tests": "A dev/tooling loadEnv test on the example files asserts that CATALOG_DIR resolves to <DATA_DIR>/catalog. The compose-render check with only DATA_DIR set succeeds for archives.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-17",
+   "title": "Compose comments and env examples contradict the services and each other",
+   "severity": "medium",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/hauler/docker/compose.yml:33",
+    "services/prospector/docker/compose.yml:48-51",
+    "modules/collect/archives/.env.example:9-15",
+    "modules/collect/archives/.env.example:42",
+    "modules/collect/archives/.env.example:43",
+    "modules/collect/archives/README.md:24",
+    "services/router/docker/compose.yml:9-13",
+    "services/hauler/tests/setup.ts:1-5"
+   ],
+   "problem": "The comments contradict the code in these places:\n(a) hauler's compose says concurrency is 'per venue; venues never wait on each other'. The code, its docs and the env example say it is one budget across every venue.\n(b) An orphaned prospector comment describes an HTTP/1.1 connection ceiling that no variable sets.\n(c) The PROSPECTOR_CONCURRENCY comment stops mid-sentence ('One transport worker per 1,000').\n(d) The venue list in the archives example leaves out bitget.\n(e) router reads ROUTER_MAX_READY and ROUTER_WATCH_QUEUES, but its compose does not pass them.\n(f) hauler's tests/setup.ts says CATALOG_API and CATALOG_TOKEN have no defaults, but config.ts sets defaults for both.\n(g) The archives README presents `tb up archives --build` as 'rebuild'. With APP_ENV=dev it only rebuilds the base image and runs stale host dist. (The CATALOG_DIR comment is covered by INF-16.)",
+   "evidence": "hauler src/venue.ts:178-186 uses one module-level budget. prospector config.ts reads only CATALOG_TOKEN, PROSPECTOR_VENUES and PROSPECTOR_CONCURRENCY. router config.ts:13-14 reads both router variables. dev.node.Dockerfile has no build step.",
+   "fix": "- hauler compose:33: change to '# Files in flight across every venue together; one budget for the link'.\n- Delete the comment at prospector compose:48-51.\n- Finish the comment at .env.example:43 after '...the machine's own ceiling', or quote IN_FLIGHT_PER_WORKER accurately.\n- List venues as `binance,bitget,bybit,gate,htx,kucoin,okx`, or point to docs/services/PROSPECTOR.md.\n- Router compose: add `ROUTER_MAX_READY: ${ROUTER_MAX_READY:-0}` and `ROUTER_WATCH_QUEUES: ${ROUTER_WATCH_QUEUES:-}`, after checking router's defaults.\n- Rewrite the hauler setup.ts comment: it pins CATALOG_API to an unroutable host so no test can reach a real catalog.\n- Archives README: say that in dev, code changes need `pnpm build` or `tb up archives -i`, and `--build` only rebuilds the image.",
+   "tests": "None.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-18",
+   "title": "Floating base-image tags, and unused Python Dockerfiles that pull uv:latest and run as root",
+   "severity": "medium",
+   "category": "security",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "docker/dev.node.Dockerfile:3",
+    "docker/prod.node.Dockerfile:3",
+    "services/redis/docker/compose.yml:6",
+    "docker/dev.python.Dockerfile:14",
+    "docker/prod.python.Dockerfile:12,38",
+    "docker/python/entrypoint.sh"
+   ],
+   "problem": "node:22-alpine, redis:7-alpine and ghcr.io/astral-sh/uv:latest are floating tags, so builds drift. No pyproject.toml or *.py exists outside .deprecated, and no compose file references a Python Dockerfile, so those images are dead code. They pull uv:latest, and the dev image runs as root.",
+   "evidence": "`find services modules -name pyproject.toml -o -name '*.py'` returns nothing outside .deprecated. `git grep python.Dockerfile` returns nothing.",
+   "fix": "1. Pin minor tags, not digests, because no update bot is configured: `ARG NODE_VERSION=22.<minor>-alpine3.<n>` and `redis:7.4-alpine`.\n2. Delete docker/dev.python.Dockerfile, docker/prod.python.Dockerfile and docker/python/. If they must stay, pin uv and add USER.\n3. The RabbitMQ version is handled in INF-19.",
+   "tests": "None.",
+   "owner_question": "Is a Python service coming soon? If so, keep the Python images and pin and harden them instead of deleting them."
+  },
+  {
+   "id": "INF-19",
+   "title": "RabbitMQ runs on the EOL 3.12 series while the README claims 3.13",
+   "severity": "medium",
+   "category": "security",
+   "decision": "DEFER",
+   "locations": [
+    "services/rabbitmq/docker/base.yml:6",
+    "services/rabbitmq/README.md:3"
+   ],
+   "problem": "RabbitMQ 3.12 no longer gets security fixes, and docker-library has dropped it. Upgrading means enabling all stable feature flags at each step (3.12, then 3.13, then 4.x) on live data volumes, and 4.x removes mirrored classic queues and deprecates transient non-exclusive queues.",
+   "evidence": "base.yml:6 is `rabbitmq:3.12-management-alpine`, while README:3 says 3.13. The docker-library 3.12 directory returns 404.",
+   "fix": "Owner-planned upgrade. On each host:\n1. Run `rabbitmqctl enable_feature_flag all` on 3.12.\n2. Move to 3.13-management-alpine and enable all flags again.\n3. Audit the packages/rabbitmq queue declarations for durable:false non-exclusive queues.\n4. Move to a supported 4.x.\nMeanwhile, fix README:3 to state 3.12 (INF-22).",
+   "tests": "After each step, the broker boots with the existing volume, and the queue-declaring services' integration tests pass.",
+   "owner_question": "When should the broker upgrade happen, and on which hosts? Do any queues rely on transient non-exclusive or mirrored semantics that 4.x drops?"
+  },
+  {
+   "id": "INF-20",
+   "title": "The whole monorepo, every .env file included, is bind-mounted writable into every container, prod included",
+   "severity": "medium",
+   "category": "security",
+   "decision": "DEFER",
+   "locations": [
+    "services/catalog/docker/compose.yml:38",
+    "services/catalog-ui/docker/compose.yml:45",
+    "services/hauler/docker/compose.yml:44",
+    "services/prospector/docker/compose.yml:60",
+    "services/stocker/docker/compose.yml:57",
+    "services/vault/docker/base.yml:27",
+    "services/hoarder/docker/compose.yml:32",
+    "services/pipe/docker/compose.yml:20",
+    "services/router/docker/compose.yml:21",
+    "docker/dev.node.Dockerfile:30-31"
+   ],
+   "problem": "Every service mounts `../../../:/live` read-write whatever APP_ENV is. The prod image runs from /app, so in prod the mount only exposes the checkout to every container as uid 1000: the root .env, module .env files, dev/tooling/.env and .git. In dev, a compromised service could rewrite another service's dist. Making the mount dev-only needs a per-env override mechanism, which dx does not have, and dx is a submodule.",
+   "evidence": "Every rendered service shows `type: bind, source: /home/user/tradebot, target: /live` with no read_only.",
+   "fix": "The owner chooses a mechanism:\n(A) dx also passes `docker/compose.${APP_ENV}.yml` when present, and the /live volume and `user` move there.\n(B) Compose profiles, or an APP_ENV-selected include.\nDo not use an env-substituted mount source with an empty default, because docker creates missing host paths. Mount it :ro unless a service is shown to need writes. Check first whether dev uses /live/.pnpm-store (npm_config_store_dir) and runs in-container pnpm.",
+   "tests": "With APP_ENV=prod, `docker compose config` shows no /live mount.",
+   "owner_question": "How should per-environment compose overrides work: a change to dx, compose profiles, or an include selected by APP_ENV? Does any dev workflow write to /live from inside a container?"
+  },
+  {
+   "id": "INF-21",
+   "title": "Prod image ships the whole monorepo with dev dependencies for every service, and the install layer is invalidated by any edit",
+   "severity": "medium",
+   "category": "efficiency",
+   "decision": "DEFER",
+   "locations": [
+    "docker/prod.node.Dockerfile:13",
+    "docker/prod.node.Dockerfile:19",
+    "docker/prod.node.Dockerfile:50"
+   ],
+   "problem": "`COPY . .` comes before install, so any edit invalidates the dependency layer. The final stage copies all of /app: about 600 MB of node_modules including dev dependencies (nx, vite, vitest, typescript), every other service's source, and the submodules. The four archives images are nearly identical multi-hundred-MB images.",
+   "evidence": "`du -sh node_modules` reports 607M. Line 50 is `COPY --from=builder /app .`.",
+   "fix": "Planned restructure:\n1. Copy the lockfile, workspace file and root package.json, run `pnpm fetch --frozen-lockfile` with a BuildKit cache mount, and then `COPY . .`.\n2. Run `pnpm install --offline --frozen-lockfile`.\n3. Run `pnpm --filter \"@tradebot/${SERVICE_NAME}...\" build`.\n4. Run `pnpm --filter \"@tradebot/${SERVICE_NAME}\" deploy --prod /out`.\n5. The final stage copies only /out, with USER node and `node dist/src/index.js`.\n\nPrerequisites:\n- Add `\"files\": [\"dist\"]` to shared/* and verify that the submodule packages ship dist, because gitignored dist can be dropped by packlist.\n- pnpm 10 deploy needs inject-workspace-packages=true or --legacy.\n- Check that prospector's seeds and catalog-ui's dist/web survive.\n- Validate against stocker's DuckDB native binding.",
+   "tests": "Build every archives service, start it, and confirm its healthcheck passes. Compare image sizes before and after.",
+   "owner_question": "Is a `pnpm deploy`-based slim prod image wanted now? It needs validation on a docker host, and it pairs naturally with INF-20's dev override."
+  },
+  {
+   "id": "INF-22",
+   "title": "RabbitMQ, Redis and infra-pack READMEs, .github/copilot-instructions.md and .gitignore describe things that do not exist",
+   "severity": "low",
+   "category": "docs",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/rabbitmq/README.md:3,15-22,26,29,35-42",
+    "services/redis/README.md:7-25,37-38,55-60,65-75",
+    "modules/infra/README.md:3,20-36,44,62,70,86-88",
+    "modules/infra/{local,store,shuttle,market}/compose.yml header comments",
+    ".github/copilot-instructions.md:7,9,29,37",
+    ".gitignore:7",
+    "README.md:55"
+   ],
+   "problem": "The docs disagree with the compose files throughout:\n- The RabbitMQ README says version 3.13; the image is 3.12. It documents RABBITMQ_AMQP_PORT and RABBITMQ_MGMT_PORT, which only the test harness uses; the real variables are QUEUE_PORT and QUEUE_MGMT_PORT, and empty means a random port. It says guest is remote-capable, gives the example host `rabbitmq` and a fake hoarder example, puts credentials in 'your module's .env' when they belong in the root .env, and does not say the default credentials only seed an empty volume.\n- The Redis README has a build command for an image with nothing to build, says CACHE_PORT defaults to 6379 (it is random), uses `tb up infra` (no such module) and host `redis`.\n- modules/infra/README.md shows the wrong cache host, claims local has queue, mentions DB_*_URL, and names modules that do not exist (archivist, collector, archeologist, packer, gui, concierge, student, witness). The pack header comments repeat these.\n- copilot-instructions.md links to docs/ai/README.md, which is missing, via a path that escapes the repo. It prescribes MongoDB and ESLint, and claims services talk only through env vars and queues.\n- .gitignore `.github/**/*.md` silently ignores new instruction and skill files.\n- The root README calls docs/tooling 'the `tb` tools'.",
+   "evidence": "`ls docs/ai` reports nothing. `git ls-files modules` lists only archives, warehouse and the five packs. `git check-ignore -v .github/skills/foo/SKILL.md` matches .gitignore:7.",
+   "fix": "Rewrite the docs from the compose files. Each provider doc covers itself on its own terms and does not name consumers (CLAUDE.md).\n- RabbitMQ README: the real image tag; that base.yml is meant to be extended; QUEUE_* and QUEUE_RT_* port semantics (loopback after INF-04); that the pack sets the hostname; credentials in the root .env, which seed only an empty volume, rotated with `rabbitmqctl change_password`; guest local-only after INF-10. Drop RABBITMQ_AMQP_PORT or mark it test-harness only.\n- Redis README: no build step; CACHE_PORT semantics; a real pack name; the pack sets the hostname (`cache` after INF-08).\n- modules/infra/README.md: a per-pack table of the services each compose actually defines and their hostnames; the shared network and its creation by `tb` (INF-03); unique project names and .dxskip (INF-07); log rotation (INF-24). Remove DB_* and the nonexistent modules. Fix the pack header comments to match.\n- copilot-instructions.md: reduce it to a pointer to ../CLAUDE.md and ../README.md, or delete it.\n- Delete .gitignore:7.\n- Confirm with the owner how the cold tools are invoked before editing README.md:55.",
+   "tests": "None.",
+   "owner_question": "Are the cold tools invoked as `tools cold` or through `tb`? This decides the wording in README.md:55."
+  },
+  {
+   "id": "INF-23",
+   "title": "Dependency hygiene: unused and phantom dependencies, version drift, and @types/node 25 against a Node 22 runtime",
+   "severity": "low",
+   "category": "code-quality",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "dev/tooling/package.json:15-16,23-24,29-34",
+    "package.json:20-26",
+    "shared/utils/package.json:11-15",
+    "shared/utils/src/tables.ts:1",
+    "services/hoarder/package.json",
+    "services/_stub/ui/package.json",
+    "services/catalog-ui/package.json:35"
+   ],
+   "problem": "The dependency lists have these problems:\n- dev/tooling declares @devvir/zipper, @tradebot/utils, redis, ws and @types/ws, but only .deprecated code uses them.\n- The root declares @types/amqplib (duplicated in dev/tooling) and nx (see INF-28).\n- Phantom dependencies: shared/utils imports @tradebot/types without declaring it; hoarder uses root @types/ws; the stub UI uses vite and vitest without declaring them; service dev scripts use the root ts-node.\n- Version drift: vite 7 and 8 are both in the lockfile; plugin-react 5 and 6; small @types and vitest skews.\n- @types/node ^25 against engines ^22.22 and node:22 images lets Node 23-25 APIs type-check and then fail at runtime.",
+   "evidence": "knip's unused list matches, confirmed by grep. `ls node_modules/.pnpm | grep ^vite@` shows 7.3.7 and 8.3.3.",
+   "fix": "1. Remove the unused dev/tooling dependencies and the root @types/amqplib.\n2. Move @types/ws to hoarder's devDependencies.\n3. Add `\"@tradebot/types\": \"workspace:*\"` to shared/utils and drop it from the root.\n4. Add vite and vitest to the stub UI.\n5. Pin @types/node to ~22 everywhere and run tsc in every package.\n6. Optionally add a pnpm `catalog:` for shared versions.\n7. Converge catalog-ui on vite 8 and plugin-react 6 as a separate, tested step.\nDo NOT remove react-grid-layout: it is used in WidgetGrid.tsx, and knip only misses it because the glob excludes .tsx (INF-25).",
+   "tests": "`pnpm install && pnpm -r build && pnpm -r test && npx knip` passes.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-24",
+   "title": "No log rotation on any container",
+   "severity": "low",
+   "category": "robustness",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/*/docker/compose.yml",
+    "services/vault/docker/base.yml",
+    "services/rabbitmq/docker/base.yml",
+    "services/redis/docker/compose.yml"
+   ],
+   "problem": "No service sets `logging:`, so the default json-file driver grows without limit unless daemon.json sets limits. prospector and hauler run for months on archive hosts where disk is the managed resource. This gets worse once INF-10 moves broker logs to the console.",
+   "evidence": "`grep -rn logging: services/*/docker modules` finds nothing.",
+   "fix": "Add `logging: {driver: local, options: {max-size: \"50m\", max-file: \"5\"}}` to every service file, including the rabbitmq base.yml and the redis compose.yml. YAML anchors do not cross include or extends boundaries, so define it per file. Add a sentence to modules/infra/README.md.",
+   "tests": "The compose-render check asserts a logging block on every service.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-25",
+   "title": "knip config: wrong path aliases, legacy and .deprecated noise, tests and .tsx excluded, dead shared exports hidden",
+   "severity": "low",
+   "category": "config",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "knip.json:1-24",
+    "shared/utils/src/stores.ts:4-6",
+    "shared/utils/src/security.ts:43",
+    "shared/utils/src/testing/compose.ts:23-91",
+    "shared/utils/src/testing/env.ts:51"
+   ],
+   "problem": "knip's report is unusable as configured:\n- The services/** paths `../../../shared/*/src` resolve outside the repo.\n- .deprecated and legacy code make up about 100 of the 104 'unused files' and all 39 unresolved imports.\n- `src/**/*.ts` skips tests and .tsx, which produces false positives such as react-grid-layout.\n- Entry re-exports hide dead shared exports: mapGet, redactCredentials and getExposedPort have no consumer, and the _test_* hooks that no test imports go unreported.",
+   "evidence": "knip output. `git grep` finds no consumer of mapGet outside its own file.",
+   "fix": "1. Add `ignore` entries for **/.deprecated/** and the cold legacy src and tests. Set `ignoreWorkspaces: [\"packages/*\",\"dx\"]`.\n2. Remove the `paths` block; workspace links resolve the packages.\n3. Set project to `src/**/*.{ts,tsx}` plus `tests/**/*.ts`.\n4. Consider includeEntryExports for shared/**.\n5. Delete mapGet, redactCredentials and getExposedPort.\n6. Un-export startTestServices and loadEnvFile but keep them, because they are used internally.\n7. Decide on POOLED_TABLES and arrayToCsv.\n8. Delete the _test_* hooks that no test imports, or add tests for them.",
+   "tests": "`npx knip` exits clean, which makes it CI-ready (INF-15).",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-26",
+   "title": "Test config hygiene: dead minWorkers, testing helpers exported from the runtime barrel, prospector tests mocking service-kit from its src, console output suppressed",
+   "severity": "low",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "services/catalog/vitest.config.ts:10",
+    "services/prospector/vitest.config.ts:20",
+    "shared/utils/src/index.ts:10",
+    "shared/utils/src/testing/compose.ts:6",
+    "services/prospector/tests/setup.ts:11-19",
+    "services/pipe/vitest.config.ts:11",
+    "services/router/vitest.config.ts:9"
+   ],
+   "problem": "The test config has four problems:\n- vitest 4.1 has no minWorkers option, so it is silently ignored.\n- @tradebot/utils re-exports ./testing, so every service loads the child_process and compose helpers at runtime.\n- prospector setup imports guardBody from service-kit's src/ rather than from the dist the service actually runs.\n- pipe and router set `onConsoleLog: () => false`, which hides console output. Service logs go through pino, so the impact is mostly ad-hoc debugging output.",
+   "evidence": "grep finds no minWorkers in the vitest 4.1.11 dist. index.ts:10 is `export * from './testing'`.",
+   "fix": "1. Delete both minWorkers lines and keep maxWorkers.\n2. Remove `export * from './testing'`. Import `@tradebot/utils/testing` in pipe's tests/setup.ts and global-setup.ts and in router's tests/setup.ts. Make the subpath resolve under node10 resolution: either `exports` plus `typesVersions`, or a testing/package.json stub.\n3. In prospector setup.ts, do NOT switch to the package root; that undoes the documented speed-up. Optionally point it at `../../packages/service-kit/dist/net/clients/fetch`.\n4. Optionally change onConsoleLog to `(_l, type) => type === 'stderr'`.\n5. Optionally type-check the vitest.config.ts files through a noEmit tsconfig.",
+   "tests": "`tsc --noEmit` passes, and the pipe and router test runs pass with the new import path.",
+   "owner_question": ""
+  },
+  {
+   "id": "INF-27",
+   "title": "Coverage thresholds fail and are enforced nowhere; credential-redaction and service-bootstrap helpers in shared/utils have 0% coverage",
+   "severity": "low",
+   "category": "testing",
+   "decision": "IMPLEMENT",
+   "locations": [
+    "vitest.config.ts:16-21",
+    "shared/utils/src/services.ts:34-94",
+    "shared/utils/src/security.ts:6-45",
+    "shared/utils/src/csv.ts:21-71",
+    "services/hoarder/package.json:13",
+    "dev/tooling/vitest.config.ts:1-12"
+   ],
+   "problem": "The base config sets 60% thresholds, but nothing runs coverage:\n- shared/utils is at 42% lines and 24% functions.\n- hoarder's branch coverage is 58%, so `test:coverage` always exits 1.\n- SKFactory, which 8 services use, has no tests.\n- redactUrl and sanitizeUrl, which keep credentials out of logs, have no tests.\n- The CSV helpers are only covered indirectly, through vault.\n- dev/tooling does not extend the base config at all.",
+   "evidence": "`vitest run --coverage` in shared/utils fails all thresholds. The same run in hoarder fails the branch threshold.",
+   "fix": "1. Add shared/utils/tests/security.test.ts: redactUrl masks u:p, leaves URLs without credentials unchanged, returns '*****' for invalid input; sanitizeUrl round-trips.\n2. Add csv.test.ts: quoting, null cells, a round trip through createCsvParser.\n3. Add services.test.ts with SK mocked: rabbitmq and redis provider wiring, topology passthrough, health port 3000 by default, the trackMessages 200/503 logic using fake timers.\n4. Make dev/tooling's config `mergeConfig(baseConfig, ...)`.",
+   "tests": "As listed in the fix.",
+   "owner_question": "Should coverage be enforced in CI, or should per-package thresholds be lowered to their measured values? Either way, do not keep a `test:coverage` script that always fails."
+  },
+  {
+   "id": "INF-28",
+   "title": "nx and @nx/vitest are installed and configured but unused, and .github holds only Nx Cloud CI skills and agents for a CI the repo does not have",
+   "severity": "low",
+   "category": "config",
+   "decision": "DEFER",
+   "locations": [
+    "package.json:19,26",
+    "nx.json:1-25",
+    "pnpm-workspace.yaml:20",
+    ".github/skills/monitor-ci/",
+    ".github/agents/ci-monitor-subagent.agent.md",
+    ".github/prompts/",
+    ".gitignore (.nx entries)"
+   ],
+   "problem": "Every script uses `pnpm -r`, and nothing invokes nx, which adds about 40-100 MB to node_modules and to prod images. The .github skills, prompts and agents are Nx-generated 'self-healing CI' guidance that misleads agents.",
+   "evidence": "`git grep -nE '\\bnx\\b|@nx/'` outside .github finds only config entries. knip reports nx as unused.",
+   "fix": "If nx is dropped: remove nx, @nx/vitest, nx.json, the allowBuilds `nx: true` entry, the .nx gitignore entries, and the Nx files under .github/skills, agents and prompts, all together. If nx is kept: route the scripts through `nx run-many` and fix targetDefaults (INF-15 already fixes `^build`).",
+   "tests": "`pnpm install` and `pnpm -r build` still work.",
+   "owner_question": "Remove nx and all its Nx Cloud boilerplate, or adopt it as the task runner?"
+  },
+  {
+   "id": "INF-29",
+   "title": "Env parsing, retry/backoff and the vault ledger format are copied across packages and behave differently",
+   "severity": "low",
+   "category": "code-quality",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/config.ts:70-78",
+    "services/hauler/src/config.ts:33-42",
+    "services/prospector/src/config.ts:72-81",
+    "services/hauler/src/fetch.ts:323-354",
+    "services/prospector/src/http.ts:313-337",
+    "shared/utils/src/testing/env.ts:13-46",
+    "dev/tooling/src/shared/utils/env.ts:9-64",
+    "services/stocker/src/ledger.ts:292-302",
+    "dev/tooling/src/tools/cold/shared/vault/ledger.ts:102-113",
+    "dx/utils/env.js (out of scope)"
+   ],
+   "problem": "The copies disagree:\n- stocker's parsePositiveInt uses parseInt, so '4.5' becomes 4 and '20GB' becomes 20. hauler and prospector use Number and throw.\n- delayFor, the Retry-After parser and sleep are duplicated in hauler and prospector, with only trivial differences.\n- There are three .env parsers with different comment and interpolation rules, and none handles `:-` or `:?`.\n- The vault ledger file names and sentinels are redeclared separately by stocker, which writes them, and dev/tooling, which reads them, with nothing keeping the two in sync.",
+   "evidence": "stocker config.ts:73 `parseInt(raw, 10)` against hauler config.ts:36 `Number(raw)`. The same LEDGER, BACKEDUP, UPDATING and OUTDATED constants are declared in both ledger.ts files.",
+   "fix": "Quick win, belonging to the stocker unit: use Number in stocker's parsePositiveInt, with tests that '4.5' and '20GB' throw.\n\nDeferred:\n(a) shared/utils env helpers: positiveInt, list, oneOf, and one compose-compatible parseEnvFile.\n(b) Shared retry helpers, or service-kit's Backoff.\n(c) One vault-format module that stocker and dev/tooling both import, with a writer-to-reader round-trip test.",
+   "tests": "A writer-to-reader round-trip test for the ledger, and a shared .env fixture test (with INF-02 and INF-16).",
+   "owner_question": "Where should the shared env, retry and vault-format code live (shared/utils or a new shared/vault package)? Should dev/tooling depend on it?"
+  },
+  {
+   "id": "INF-30",
+   "title": "shared/lenses runs SQL against tables defined in prospector's migrations, and catalog's tests keep a hand-copied schema",
+   "severity": "low",
+   "category": "architecture",
+   "decision": "DEFER",
+   "locations": [
+    "shared/lenses/src/members.ts:43-210",
+    "shared/lenses/src/draft.ts:100-242",
+    "shared/lenses/src/rules.ts:133",
+    "shared/lenses/src/store.ts:23-115",
+    "services/prospector/src/database/schema.ts:259+",
+    "services/catalog/tests/fixture.ts",
+    "shared/lenses/package.json"
+   ],
+   "problem": "The shared package depends on a consumer's internal schema, which inverts the dependency direction. A prospector migration can break catalog without any type error. catalog's tests/fixture.ts keeps a hand-copied SCHEMA that can drift. shared/lenses' own coverage is 14%. The behaviour is exercised by about 48 tests in catalog and prospector, but none of those count toward shared/lenses.",
+   "evidence": "shared/lenses' coverage run reports 13.45% lines, with rules.ts and store.ts at 0. The tables are defined only in prospector's schema.ts.",
+   "fix": "Owner decision. Option A: move the catalog.db DDL for venue, slice, pattern, series, partition, lens and lens_member into shared/lenses, or a new shared/catalog-schema, as an exported createCatalogSchema(db). prospector's migrations would compose it, and catalog's fixture would import it. Then add in-package tests on `new DatabaseSync(':memory:')` covering:\n- rulesFor\n- letThrough\n- catchUp batching and rebuild\n- admit\n- putLens and editLens rebuilding\n- dropLens cascade\n- lensNameIsSound boundaries\n- problemsWith",
+   "tests": "As listed in the fix.",
+   "owner_question": "Which package owns the catalog.db schema: prospector, or shared/lenses (or a new schema package)?"
+  },
+  {
+   "id": "INF-31",
+   "title": "Two brokers per host each use the 60%-of-host-RAM watermark, and no container has a memory limit",
+   "severity": "low",
+   "category": "robustness",
+   "decision": "DEFER",
+   "locations": [
+    "services/rabbitmq/docker/rabbitmq.conf:9-10",
+    "modules/infra/{local,store,market}/compose.yml",
+    "services/stocker/docker/compose.yml:24,48"
+   ],
+   "problem": "The relative watermark is computed against host RAM when no cgroup limit is set, so two brokers on one host can grow to 120% of RAM. This is not plausible today, because nothing on the store host uses a broker. The suggested stocker sizing was also wrong: DuckDB memory is shared across connections, not multiplied by concurrency.",
+   "evidence": "rabbitmq.conf:9 is `vm_memory_high_watermark.relative = 0.6`. No compose file sets mem_limit.",
+   "fix": "Once the brokers carry real traffic: `mem_limit: ${QUEUE_MEM_LIMIT:-2g}` and `${QUEUE_RT_MEM_LIMIT:-2g}`. If stocker gets a limit, size it as NODE_MEMORY_MB + STOCKER_ENGINE_MEMORY_GB + 1-2 GB. Check the 3.12 and 3.13 docs before removing paging_ratio.",
+   "tests": "None.",
+   "owner_question": "What memory budget should each host give the brokers and stocker?"
+  },
+  {
+   "id": "INF-32",
+   "title": "Stocker downloads the DuckDB excel extension at runtime into the container's ephemeral home",
+   "severity": "low",
+   "category": "robustness",
+   "decision": "DEFER",
+   "locations": [
+    "services/stocker/src/build.ts:105-108",
+    "services/stocker/src/formats/xlsx.ts:12",
+    "services/stocker/docker/compose.yml:54-59"
+   ],
+   "problem": "`INSTALL excel` downloads from extensions.duckdb.org into /home/node/.duckdb, which sits in the container layer. Every recreated container downloads it again, and hosts with restricted egress fail every xlsx partition.",
+   "evidence": "build.ts:107 runs `INSTALL ${extension}`. Nothing sets extension_directory.",
+   "fix": "Simplest: `SET extension_directory = '<vault dir>/.duckdb-extensions'` before INSTALL, so the extension persists. Alternatively pre-install it into the prod image for offline hosts.",
+   "tests": "A stocker unit test asserting that extension_directory is set before any INSTALL.",
+   "owner_question": "Must store hosts work with restricted egress? If so, pre-install the extension in the image. Otherwise persisting it under the vault dir is enough."
+  }
+ ],
+ "rejected": [
+  {
+   "title": "Root `pnpm test` hangs in dx's vitest watch mode (lens A F19 3b)",
+   "reason": "Refuted. Under `pnpm -r`, children get a non-TTY stdin, and vitest runs once and exits 0. This was reproduced under a pty."
+  },
+  {
+   "title": "react-grid-layout is an unused dependency (lens B F13 part)",
+   "reason": "Refuted. It is imported in services/_stub/ui/src/components/WidgetGrid.tsx. knip misses it because its glob excludes .tsx."
+  },
+  {
+   "title": "Hiding conf.d loses the management image's metrics-collector setting (lens A F8 and lens B F20 part)",
+   "reason": "Refuted. The management Dockerfile deletes that file itself."
+  },
+  {
+   "title": "'prospector publishes no API port' is wrong (lens A F18 item 5)",
+   "reason": "Refuted. Only the health port is published, not the API. It becomes moot once INF-04 removes the :3000 publications."
+  },
+  {
+   "title": "Fix the network by using `${COMPOSE_PROJECT_NAME:-dx}-network` in the compose files (lens B F4 suggested fix)",
+   "reason": "Refuted by the second verifier. Compose fills COMPOSE_PROJECT_NAME with each file's own project name, so each module would get a separate network. See INF-03."
+  },
+  {
+   "title": "Use `${DATA_DIR:?}` inside .env files (lens B F9 suggested fix)",
+   "reason": "Rejected as written. The dev/tooling and shared/utils parsers would misread it and silently produce '/archives'. See INF-16."
+  },
+  {
+   "title": "Switch prospector's test setup to import guardBody from the @devvir/service-kit root (lens B F22 suggested fix)",
+   "reason": "Rejected. It undoes a documented speed-up, because the root import loads express and ws into every worker. See INF-26."
+  },
+  {
+   "title": "Fix the dist path by adding rootDir ./src to the service tsconfigs (alternative in INF-01)",
+   "reason": "Rejected. It breaks catalog-ui's web path resolution and prospector's seed copy location."
+  },
+  {
+   "title": "RabbitMQ guest/guest fallback is remotely exploitable (lens A F4 and F7 part)",
+   "reason": "Overstated. guest is loopback-only, so the fallback fails closed. It is kept only as a robustness point in INF-09."
+  }
+ ]
+}
